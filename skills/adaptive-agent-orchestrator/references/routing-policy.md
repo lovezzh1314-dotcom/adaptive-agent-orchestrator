@@ -116,6 +116,12 @@ must own disjoint context or independently reduce a material risk. In lean
 mode, do not use speculative races and do not allocate a reviewer to merely
 summarize or approve another worker.
 
+The controller applies the four-Worker ceiling across the root task, including
+direct, durable, later-wave, and retry Workers. The deterministic journal
+enforces it within one run; separate runs do not share a ledger. A
+materialization that fails its immediate health probe is not counted as a
+Worker.
+
 ## Escalation ladder
 
 1. Check whether the task packet, inputs, and acceptance test were defective.

@@ -264,26 +264,50 @@ try {
         }
 
         $launchEvents = @($events | Where-Object { $_.status -eq 'launch_reserved' })
-        if ($launchEvents.Count -ge [int]$plan.limits.max_total_agent_nodes) {
-            throw 'Total agent execution slots are exhausted.'
-        }
-        $retryEvents = @(
-            $launchEvents | Group-Object node_id | ForEach-Object {
-                [Math]::Max(0, $_.Count - 1)
-            }
-        )
-        $retryCount = if ($retryEvents.Count) {
-            ($retryEvents | Measure-Object -Sum).Sum
-        } else { 0 }
-        if ($priorState -eq 'failed' -and
-            $retryCount -ge [int]$plan.limits.retry_reserve) {
-            throw 'Retry reserve is exhausted.'
-        }
-
         $latestByNode = @{}
         foreach ($event in $events | Where-Object { $null -ne $_.node_id }) {
             $latestByNode[[string]$event.node_id] = [string]$event.status
         }
+        $pendingStates = @('launch_reserved', 'materializing')
+        $pendingCount = @(
+            $latestByNode.Values | Where-Object { $_ -in $pendingStates }
+        ).Count
+        $materializedCount = @(
+            $events | Where-Object { $_.status -eq 'materialized' }
+        ).Count
+        $occupiedWorkerSlots = $pendingCount + $materializedCount
+        if ($occupiedWorkerSlots -ge [int]$plan.limits.max_total_agent_nodes) {
+            throw 'Total agent execution slots are exhausted.'
+        }
+        $retryCount = 0
+        foreach ($nodeEvents in @(
+            $events | Where-Object { $null -ne $_.node_id } |
+                Group-Object node_id
+        )) {
+            $attemptSeen = $false
+            $attemptMaterialized = $false
+            foreach ($nodeEvent in @($nodeEvents.Group)) {
+                if ($nodeEvent.status -eq 'launch_reserved') {
+                    if ($attemptSeen -and $attemptMaterialized) {
+                        $retryCount++
+                    }
+                    $attemptSeen = $true
+                    $attemptMaterialized = $false
+                } elseif ($nodeEvent.status -eq 'materialized') {
+                    $attemptMaterialized = $true
+                }
+            }
+        }
+        if ($priorState -eq 'failed' -and
+            $retryCount -ge [int]$plan.limits.retry_reserve) {
+            $lastFailure = @(
+                $history | Where-Object { $_.status -eq 'failed' }
+            ) | Select-Object -Last 1
+            if ($lastFailure.error_class -ne 'startup_unmaterialized') {
+                throw 'Retry reserve is exhausted.'
+            }
+        }
+
         $activeStates = @(
             'launch_reserved', 'materializing', 'materialized', 'running', 'needs_input'
         )
@@ -309,7 +333,7 @@ try {
             }
         ).Count
         $remainingAfterLaunch = [int]$plan.limits.max_total_agent_nodes -
-            ($launchEvents.Count + 1)
+            ($occupiedWorkerSlots + 1)
         if ($remainingAfterLaunch -lt $unlaunchedVerification) {
             throw 'Launch would consume capacity reserved for planned verification nodes.'
         }

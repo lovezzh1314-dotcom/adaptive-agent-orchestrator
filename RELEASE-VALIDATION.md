@@ -1,7 +1,7 @@
 # Release validation receipt
 
-Release: `0.4.1-beta.1`
-Policy version: `0.4.1`
+Release: `0.4.2-beta.1`
+Policy version: `0.4.2`
 Date: `2026-07-18`
 
 ## Environment
@@ -36,13 +36,18 @@ python `
 ## Results
 
 - Exit code: 0
-- PowerShell scripts parsed: 13
-- Self-test assertions: 121 passed
-- Intentional invalid-plan negative cases: 28 correctly rejected
+- PowerShell scripts parsed: 15
+- Self-test assertions: 369 passed
+- Intentional invalid-plan negative cases: 36 correctly rejected
 - Skill Creator validation: `Skill is valid!`
+- Self-hosted live review: one read-only role-system architecture Worker was
+  explained before creation, materialized successfully, and reviewed the
+  current working tree without creating child Workers; final result was
+  `GREEN`, with no remaining P0 or P1 findings.
 
-The self-test covers the deterministic local plan, role, short/full packet,
-context efficiency, benchmark, usage diagnostics, lifecycle, journal, handoff,
-and completion logic. It uses simulated thread identifiers and synthetic benchmark
-metrics; it is not evidence that a live Codex execution surface materialized
-threads or achieved measured Token savings on a production task.
+The self-test covers the deterministic local plan, role activation, compact
+industry packs, short/full packet, context efficiency, benchmark, usage
+diagnostics, lifecycle, journal, handoff, and completion logic. Synthetic
+benchmark metrics do not prove measured Token savings on production tasks. The
+live self-hosted review verifies one real materialization path, not every host
+or failure mode.

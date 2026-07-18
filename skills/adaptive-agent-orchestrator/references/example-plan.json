@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "policy_version": "0.4.1",
+  "policy_version": "0.4.2",
   "run_id": "example-review-001",
   "goal": "Draft and independently verify a bounded architecture proposal.",
   "mode": "workflow",
@@ -100,6 +100,12 @@
       "workflow": "direct",
       "depends_on": [],
       "role_id": "architecture-owner",
+      "role_activation": {
+        "necessity": "The draft is a bounded writable artifact with independent ownership.",
+        "omission_impact": "The main agent would lose parallel progress on the architecture draft.",
+        "user_disposition": "approved",
+        "authorization_evidence": "user:example-plan-approval"
+      },
       "purpose": "work",
       "task": "Produce a concrete architecture proposal.",
       "capability": "strong",
@@ -131,6 +137,12 @@
       "workflow": "pipeline",
       "depends_on": ["draft"],
       "role_id": "adversarial-reviewer",
+      "role_activation": {
+        "necessity": "Medium-risk architecture claims need an independent falsification pass.",
+        "omission_impact": "Failure cases may remain hidden before final integration.",
+        "user_disposition": "approved",
+        "authorization_evidence": "user:example-plan-approval"
+      },
       "purpose": "verification",
       "task": "Find falsifiable failure cases in the proposal.",
       "capability": "strong",

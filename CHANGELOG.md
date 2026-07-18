@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.2-beta.1 - 2026-07-18
+
+Role-activation release. Plan policy version advances to `0.4.2`.
+
+- Separate role selection from Worker creation: the main agent may adopt,
+  defer, or skip a role instead of filling available seats.
+- Require a pre-creation explanation of necessity, task, boundaries, context,
+  output, evidence, permissions, dependencies, and omission impact; report the
+  actual Worker identity and status after materialization.
+- Bind durable explicit approval to `user:` evidence and automatic teaming to
+  an existing project-relative `policy:path:` file instead of trusting a naked
+  plan flag.
+- Enforce a hard maximum of four Workers per root task and reject plan limits
+  above four. Failed health probes do not count as created Workers.
+- Permit a replacement startup after a confirmed `startup_unmaterialized`
+  failure without consuming retry reserve; report materialized Worker count
+  separately from launch attempts.
+- Add compact on-demand role packs for supply chain, software development,
+  creative production, and public equity research; each contains only three or
+  four operational roles and exact-role queries do not load neighbors.
+- Add a manuscript co-author pattern: the main agent owns the argument spine
+  and final merge, methods and domain specialists own bounded sections, and
+  one independent academic reviewer enters only at the quality gate.
+- Add an optional manuscript profile that distinguishes bounded co-authors,
+  research contributors, and independent reviewers without affecting ordinary
+  or review-only plans.
+- Add deterministic role-activation preview and role-preset query scripts,
+  plus negative tests for missing authorization and excessive Worker limits.
+
 ## 0.4.1-beta.1 - 2026-07-18
 
 Friction-reduction release. Plan policy version advances to `0.4.1`.

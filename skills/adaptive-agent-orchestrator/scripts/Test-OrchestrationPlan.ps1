@@ -96,8 +96,8 @@ $plan = Get-Content -LiteralPath $resolvedPlan -Raw | ConvertFrom-Json -Depth 10
 if ((Get-PlanProperty $plan 'schema_version') -ne '1.0') {
     Add-PlanError "schema_version must be '1.0'."
 }
-if ((Get-PlanProperty $plan 'policy_version') -ne '0.4.1') {
-    Add-PlanError "policy_version must be '0.4.1'."
+if ((Get-PlanProperty $plan 'policy_version') -ne '0.4.2') {
+    Add-PlanError "policy_version must be '0.4.2'."
 }
 $null = Require-Text $plan 'run_id' 'Plan'
 $null = Require-Text $plan 'goal' 'Plan'
@@ -124,7 +124,7 @@ if ($null -eq $orchestrator) {
 $limits = Get-PlanProperty $plan 'limits'
 $limitRules = [ordered]@{
     max_concurrent_nodes = @(1, 6)
-    max_total_agent_nodes = @(1, 8)
+    max_total_agent_nodes = @(1, 4)
     max_new_nodes_per_wave = @(1, 3)
     max_attempts_per_node = @(1, 2)
     retry_reserve = @(0, 2)
@@ -290,6 +290,62 @@ foreach ($node in $nodes) {
             Add-PlanError "Writable node '$id' requires write_scope."
         }
         if ($kind -eq 'agent') {
+            $roleActivation = Get-PlanProperty $node 'role_activation'
+            if ($null -eq $roleActivation) {
+                Add-PlanError "Agent node '$id' requires role_activation."
+            } else {
+                $null = Require-Text $roleActivation 'necessity' (
+                    "Agent node '$id' role_activation"
+                )
+                $null = Require-Text $roleActivation 'omission_impact' (
+                    "Agent node '$id' role_activation"
+                )
+                $userDisposition = Get-PlanProperty $roleActivation 'user_disposition'
+                if ($userDisposition -notin @('approved', 'auto-authorized')) {
+                    Add-PlanError (
+                        "Agent node '$id' role_activation.user_disposition " +
+                        'must be approved or auto-authorized.'
+                    )
+                }
+                $authorizationEvidence = Require-Text $roleActivation (
+                    'authorization_evidence'
+                ) "Agent node '$id' role_activation"
+                if ($userDisposition -eq 'approved' -and
+                    $authorizationEvidence -notmatch '^user:.+') {
+                    Add-PlanError (
+                        "Agent node '$id' approved activation requires " +
+                        'authorization_evidence beginning with user:.'
+                    )
+                }
+                if ($userDisposition -eq 'auto-authorized' -and
+                    $authorizationEvidence -notmatch '^policy:path:(.+)$') {
+                    Add-PlanError (
+                        "Agent node '$id' auto-authorized activation requires " +
+                        'authorization_evidence formatted as policy:path:<file>.'
+                    )
+                } elseif ($userDisposition -eq 'auto-authorized') {
+                    $policyPath = $Matches[1]
+                    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
+                        Add-PlanError (
+                            "Agent node '$id' auto-authorized activation " +
+                            'requires -WorkspaceRoot to verify its policy.'
+                        )
+                    } elseif ([IO.Path]::IsPathRooted($policyPath) -or
+                        ($policyPath -split '[\\/]' -contains '..')) {
+                        Add-PlanError (
+                            "Agent node '$id' authorization policy must be a " +
+                            'safe project-relative path.'
+                        )
+                    } elseif (-not (Test-Path -LiteralPath (
+                            Join-Path $WorkspaceRoot $policyPath
+                        ) -PathType Leaf)) {
+                        Add-PlanError (
+                            "Agent node '$id' authorization policy does not exist: " +
+                            $policyPath
+                        )
+                    }
+                }
+            }
             $topology = Get-PlanProperty $node 'topology'
             if ($topology -notin @('native-subagent', 'background-thread')) {
                 Add-PlanError "Agent node '$id' has invalid topology '$topology'."
@@ -513,6 +569,86 @@ $verificationNodes = @(
 )
 if ((Get-PlanProperty $plan 'risk') -eq 'high' -and $verificationNodes.Count -lt 1) {
     Add-PlanError 'High-risk plans require a planned verification agent node.'
+}
+
+$manuscript = Get-PlanProperty $plan 'manuscript_profile'
+if ($null -ne $manuscript) {
+    $manuscriptMode = Get-PlanProperty $manuscript 'mode'
+    if ($manuscriptMode -notin @('coauthoring', 'review-only')) {
+        Add-PlanError (
+            'manuscript_profile.mode must be coauthoring or review-only.'
+        )
+    }
+    $leadAuthorNodeId = Require-Text $manuscript 'lead_author_node_id' (
+        'manuscript_profile'
+    )
+    if (-not $ids.ContainsKey($leadAuthorNodeId) -or
+        (Get-PlanProperty $ids[$leadAuthorNodeId] 'kind') -ne 'main') {
+        Add-PlanError (
+            'manuscript_profile.lead_author_node_id must reference a main node.'
+        )
+    }
+    $leadOwns = @(Get-PlanProperty $manuscript 'lead_author_owns')
+    foreach ($requiredOwnership in @(
+        'argument-spine', 'abstract', 'conclusion', 'final-merge'
+    )) {
+        if ($requiredOwnership -notin $leadOwns) {
+            Add-PlanError (
+                "manuscript_profile.lead_author_owns requires '$requiredOwnership'."
+            )
+        }
+    }
+
+    $coauthorCount = 0
+    foreach ($agentNode in $agentNodes) {
+        $contribution = Get-PlanProperty $agentNode 'manuscript_contribution'
+        if ($null -eq $contribution) {
+            Add-PlanError (
+                "Manuscript agent node '$($agentNode.id)' requires " +
+                'manuscript_contribution.'
+            )
+            continue
+        }
+        $contributionMode = Get-PlanProperty $contribution 'mode'
+        if ($contributionMode -notin @(
+            'co-author', 'independent-review', 'research'
+        )) {
+            Add-PlanError (
+                "Manuscript agent node '$($agentNode.id)' has invalid " +
+                'manuscript_contribution.mode.'
+            )
+            continue
+        }
+        if ($contributionMode -eq 'co-author') {
+            $coauthorCount++
+            $null = Require-Text $contribution 'section_scope' (
+                "Manuscript co-author '$($agentNode.id)'"
+            )
+            $coauthorRole = $roles[[string]$agentNode.role_id]
+            if ((Get-PlanProperty $coauthorRole 'tool_policy') -notin @(
+                'proposal-only', 'scoped-write'
+            )) {
+                Add-PlanError (
+                    "Manuscript co-author '$($agentNode.id)' must use a " +
+                    'proposal-only or scoped-write role.'
+                )
+            }
+        }
+        if ($contributionMode -eq 'independent-review' -and (
+            (Get-PlanProperty $agentNode 'purpose') -ne 'verification' -or
+            (Get-PlanProperty $agentNode 'read_only') -ne $true
+        )) {
+            Add-PlanError (
+                "Manuscript independent reviewer '$($agentNode.id)' must be " +
+                'read-only with purpose verification.'
+            )
+        }
+    }
+    if ($manuscriptMode -eq 'coauthoring' -and $coauthorCount -lt 1) {
+        Add-PlanError (
+            'Coauthoring manuscript_profile requires at least one co-author.'
+        )
+    }
 }
 
 $writerIds = @($normalizedWriterScopes.Keys)

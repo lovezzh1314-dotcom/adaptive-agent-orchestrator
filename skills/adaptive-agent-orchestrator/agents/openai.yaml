@@ -1,0 +1,7 @@
+interface:
+  display_name: "Adaptive Agent Orchestrator"
+  short_description: "Route bounded agent teams and recoverable workflows"
+  default_prompt: "Use $adaptive-agent-orchestrator to plan and execute this complex task with bounded agents, independent validation, and recovery."
+
+policy:
+  allow_implicit_invocation: true

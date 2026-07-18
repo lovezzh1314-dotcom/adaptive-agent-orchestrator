@@ -93,7 +93,8 @@ cp -R skills/adaptive-agent-orchestrator \
   ~/.codex/skills/adaptive-agent-orchestrator
 ```
 
-PowerShell 7 is required to execute the bundled deterministic scripts.
+PowerShell 7.5 or later is required to execute the bundled deterministic
+scripts.
 
 ## Quick start
 
@@ -126,6 +127,39 @@ from its plan and event journal without reusing failed execution context.
 The Skill decides whether coordination is worth its cost. Small, sequential
 tasks should remain in the main agent.
 
+## Compared with official Codex subagents
+
+[Codex subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+are the execution primitive: Codex can spawn specialized agents in parallel,
+configure custom agents, collect their results, and expose their threads in
+supported clients. They are excellent for a direct request such as “run one
+reviewer for security and another for test gaps.”
+
+Adaptive Agent Orchestrator is a governance layer above that primitive. It does
+not claim to replace the official feature.
+
+| Capability | Official subagents | Adaptive Agent Orchestrator |
+| --- | --- | --- |
+| Fast one-off delegation | Built in and simpler | Intentionally stays out of the way |
+| Parallel agent execution | Built in | Can use it as one execution topology |
+| Custom agent instructions | Supported through agent files | Adds guided role definition with non-goals, evidence, questions, and escalation contracts |
+| Dependency graph | Prompt-driven orchestration | Validated DAG with explicit dependency gates |
+| Write ownership | Requires careful prompting and sandbox choices | Rejects overlapping writer scopes before execution |
+| Retry context | Managed by the current session | Declares fresh/reuse policy and forces rotation after failure, scope, or version boundaries |
+| Durable recovery | Thread history and returned summaries | Immutable plan hash, append-only event journal, replayable state, and compact handoffs |
+| Handoff integrity | Summary-oriented | Size-limited immutable handoff with SHA-256 binding |
+| Completion | Main agent consolidates results | Deterministic node, artifact, evidence, and human-decision gates |
+| Audit trail | Inspectable agent threads | Structured lifecycle events, dispositions, evidence pointers, and tamper checks |
+
+Use official subagents directly when the task is short, read-heavy, and easy to
+verify. Use this Skill when a mistake would be caused by coordination itself:
+multiple writers, several stages, persistent roles, retries, recovery,
+independent quality gates, or a need to explain exactly why the run is
+complete.
+
+The practical advantage is not “more agents.” It is **less ambiguity per
+agent, explicit ownership, and a recoverable proof of what happened**.
+
 ## How it works
 
 ```text
@@ -153,7 +187,7 @@ performing any authorized external action.
 
 ## Validation
 
-The v0.3.0 distribution is checked by:
+The v0.3.0-beta.1 distribution is checked by:
 
 - PowerShell parser validation for all bundled scripts;
 - 53 self-test assertions;
@@ -179,9 +213,10 @@ not a standalone agent hosting platform.
   on the controller and execution surface.
 - Natural-language context exclusions cannot erase history already injected by
   a host. Start fresh workers with only the declared packet and input artifacts.
-- PowerShell 7 is the supported script runtime. Cross-platform CI currently
-  validates the Windows execution path.
-- v0.3.0 should be treated as an early public release; plan schemas may evolve.
+- PowerShell 7.5+ is the supported script runtime. This beta is verified on
+  Windows 10.0.22621 with PowerShell 7.6.3; macOS and Linux execution have not
+  been verified.
+- v0.3.0-beta.1 is an early public release; plan schemas may evolve.
 
 ## Security model
 

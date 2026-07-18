@@ -1,0 +1,35 @@
+name: Validate Skill
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse scripts and run deterministic self-test
+        shell: pwsh
+        run: |
+          $skill = Join-Path $PWD 'skills/adaptive-agent-orchestrator'
+          $errors = @()
+          Get-ChildItem "$skill/scripts" -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$tokens,
+              [ref]$parseErrors
+            ) | Out-Null
+            $errors += @($parseErrors)
+          }
+          if ($errors.Count) {
+            $errors | Format-List
+            throw 'PowerShell parser validation failed.'
+          }
+          & "$skill/scripts/Test-Self.ps1"

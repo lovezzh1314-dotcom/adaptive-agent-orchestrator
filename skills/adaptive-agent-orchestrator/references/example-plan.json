@@ -1,0 +1,179 @@
+{
+  "schema_version": "1.0",
+  "policy_version": "0.3.0",
+  "run_id": "example-review-001",
+  "goal": "Draft and independently verify a bounded architecture proposal.",
+  "mode": "workflow",
+  "risk": "medium",
+  "orchestrator": {
+    "id": "main",
+    "role": "controller",
+    "allow_delegation": true
+  },
+  "roles": [
+    {
+      "id": "architecture-owner",
+      "display_name": "Architecture Owner",
+      "mission": "Produce a bounded architecture proposal that can be independently tested.",
+      "responsibilities": ["Define interfaces, limits, and failure handling."],
+      "non_goals": ["Do not approve the final proposal.", "Do not create agents."],
+      "required_inputs": ["Goal", "Constraints", "Acceptance criteria"],
+      "deliverables": ["Architecture proposal"],
+      "evidence_rules": ["Separate verified facts, assumptions, and open risks."],
+      "tool_policy": "scoped-write",
+      "question_policy": {
+        "ask_when": ["A required architectural constraint is missing."],
+        "max_questions": 2,
+        "safe_assumptions": []
+      },
+      "escalation_conditions": ["Required scope conflicts with the plan."],
+      "identity_statement": "I own the bounded architecture draft, not orchestration or final approval.",
+      "user_defined": false
+    },
+    {
+      "id": "adversarial-reviewer",
+      "display_name": "Adversarial Reviewer",
+      "mission": "Find falsifiable failure cases in the proposed architecture.",
+      "responsibilities": ["Construct counterexamples.", "Propose executable tests."],
+      "non_goals": ["Do not edit the proposal.", "Do not create agents."],
+      "required_inputs": ["Architecture proposal", "Acceptance criteria"],
+      "deliverables": ["Prioritized findings", "Questions", "Test cases"],
+      "evidence_rules": ["Every finding needs a reproducible failure scenario."],
+      "tool_policy": "read-only",
+      "question_policy": {
+        "ask_when": ["Evidence required for a finding is inaccessible."],
+        "max_questions": 2,
+        "safe_assumptions": []
+      },
+      "escalation_conditions": ["A finding requires an external or irreversible action."],
+      "identity_statement": "I challenge the proposal independently and never approve my own work.",
+      "user_defined": false
+    },
+    {
+      "id": "integrator",
+      "display_name": "Evidence Integrator",
+      "mission": "Prepare evidence-based adoption decisions for the main agent.",
+      "responsibilities": ["Map every finding to an adoption decision."],
+      "non_goals": ["Do not make external changes.", "Do not create agents."],
+      "required_inputs": ["Draft", "Review findings"],
+      "deliverables": ["Disposition table", "Final proposal draft"],
+      "evidence_rules": ["State why each finding is adopted or rejected."],
+      "tool_policy": "scoped-write",
+      "question_policy": {
+        "ask_when": ["Two accepted requirements conflict."],
+        "max_questions": 2,
+        "safe_assumptions": []
+      },
+      "escalation_conditions": ["The evidence cannot resolve a high-risk conflict."],
+      "identity_statement": "I prepare integration evidence; the main agent owns final approval.",
+      "user_defined": false
+    }
+  ],
+  "limits": {
+    "max_concurrent_nodes": 3,
+    "max_total_agent_nodes": 6,
+    "max_new_nodes_per_wave": 3,
+    "max_attempts_per_node": 2,
+    "retry_reserve": 1,
+    "verification_reserve": 1,
+    "max_ultra_nodes": 1,
+    "max_agent_depth": 1,
+    "max_graph_depth": 6,
+    "max_dynamic_nodes": 1,
+    "max_forks": 0
+  },
+  "nodes": [
+    {
+      "id": "draft",
+      "kind": "agent",
+      "topology": "background-thread",
+      "workflow": "direct",
+      "depends_on": [],
+      "role_id": "architecture-owner",
+      "purpose": "work",
+      "task": "Produce a concrete architecture proposal.",
+      "capability": "strong",
+      "effort": "high",
+      "read_only": false,
+      "write_scope": ["artifacts/draft"],
+      "acceptance": ["Proposal states interfaces, limits, and failure handling."],
+      "max_attempts": 1,
+      "allow_delegation": false,
+      "context": {
+        "session_policy": "fresh",
+        "continuity_key": "architecture-proposal",
+        "max_prior_turns": 0,
+        "inputs": ["Plan goal", "Constraints", "Acceptance criteria"],
+        "excluded": ["Unrelated project conversations", "Prior reviewer reasoning"],
+        "handoff_path": "artifacts/handoffs/draft.json",
+        "handoff_max_chars": 4000,
+        "rotate_on": ["system-error", "scope-change", "version-boundary"]
+      }
+    },
+    {
+      "id": "review",
+      "kind": "agent",
+      "topology": "native-subagent",
+      "workflow": "pipeline",
+      "depends_on": ["draft"],
+      "role_id": "adversarial-reviewer",
+      "purpose": "verification",
+      "task": "Find falsifiable failure cases in the proposal.",
+      "capability": "strong",
+      "effort": "xhigh",
+      "read_only": true,
+      "write_scope": [],
+      "acceptance": ["Each finding includes a failing scenario and a test."],
+      "max_attempts": 1,
+      "allow_delegation": false,
+      "context": {
+        "session_policy": "fresh",
+        "continuity_key": "architecture-review",
+        "max_prior_turns": 0,
+        "inputs": ["Validated architecture draft", "Acceptance criteria"],
+        "excluded": ["Implementer's hidden reasoning", "Unrelated project conversations"],
+        "handoff_path": "artifacts/handoffs/review.json",
+        "handoff_max_chars": 4000,
+        "rotate_on": ["system-error", "scope-change", "version-boundary"]
+      }
+    },
+    {
+      "id": "integrate",
+      "kind": "main",
+      "topology": "main",
+      "workflow": "pipeline",
+      "depends_on": ["review"],
+      "role_id": "integrator",
+      "task": "Adopt or reject each finding and finalize the proposal.",
+      "capability": "standard",
+      "effort": "high",
+      "read_only": false,
+      "write_scope": ["artifacts/final"],
+      "acceptance": ["Every review finding has a disposition."],
+      "max_attempts": 1,
+      "allow_delegation": false
+    }
+  ],
+  "gates": [],
+  "completion": {
+    "required_nodes": ["draft", "review", "integrate"],
+    "artifact_checks": [
+      {
+        "path": "artifacts/final",
+        "type": "directory",
+        "minimum_items": 1
+      }
+    ],
+    "evidence_checks": [
+      {
+        "node_id": "review",
+        "minimum_entries": 1
+      },
+      {
+        "node_id": "integrate",
+        "minimum_entries": 1
+      }
+    ],
+    "stop_conditions": ["Budget exhausted", "Required tool unavailable"]
+  }
+}

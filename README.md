@@ -31,8 +31,8 @@ task. Savings must be demonstrated by fair end-to-end benchmarks.
   reported after materialization; choosing a role never forces a Worker.
 - **Four-Worker ceiling:** the controller counts direct and durable Workers
   together; deterministic scripts enforce four inside each durable run.
-- **On-demand professional roles:** compact supply-chain, software, creative,
-  and equity-research packs expose only the selected contract.
+- **On-demand professional roles:** built-in industry role packs expose only
+  the selected contract and can expand without bloating every Worker prompt.
 - **Manuscript co-authorship:** methods and domain specialists can own bounded
   sections while the main agent preserves the argument spine and final voice.
 - **Explicit role lifetime:** task, project, and user-owned roles cannot be

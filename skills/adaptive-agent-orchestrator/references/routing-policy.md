@@ -55,7 +55,7 @@ invent an unavailable model ID.
 - the selected surface and model actually support it;
 - the plan states a concrete quality reason;
 - `limits.max_ultra_nodes` has remaining capacity;
-- the node is read-only unless the user explicitly authorizes its write scope;
+- the node is read-only; v0.3 does not permit Ultra writers;
 - the node cannot delegate or orchestrate;
 - a cheaper attempt has failed, or the user explicitly requested Ultra for
   this node.

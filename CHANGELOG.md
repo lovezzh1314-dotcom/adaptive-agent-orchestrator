@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.3.0 - 2026-07-18
+## 0.3.0-beta.1 - 2026-07-18
 
-First public release.
+First public beta release. The plan policy version remains `0.3.0`.
 
 - Add structured role, node, dependency, evidence, and completion contracts.
 - Add bounded lifecycle and hash-chained event journal.

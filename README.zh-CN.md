@@ -89,7 +89,7 @@ cp -R skills/adaptive-agent-orchestrator \
   ~/.codex/skills/adaptive-agent-orchestrator
 ```
 
-运行附带的确定性脚本需要 PowerShell 7。
+运行附带的确定性脚本需要 PowerShell 7.5 或更高版本。
 
 ## 快速开始
 
@@ -176,7 +176,7 @@ Adaptive Agent Orchestrator 是建立在这种执行能力之上的**治理层**
 
 ## 验证情况
 
-v0.3.0 发布包目前通过：
+v0.3.0-beta.1 发布包目前通过：
 
 - 全部 PowerShell 脚本语法解析；
 - 53 项自测断言；
@@ -199,8 +199,9 @@ pwsh -NoProfile -File `
 - 真实线程健康状态、工作目录和继承轮数仍需要主 Agent 与执行平台核验。
 - 如果宿主已经注入历史上下文，自然语言 `excluded` 无法把它物理删除；fresh
   Worker 应当只接收声明的任务包和输入产物。
-- 脚本运行时目前以 PowerShell 7 为准，CI 主要验证 Windows 执行路径。
-- v0.3.0 是早期公开版本，计划 Schema 后续可能演进。
+- 脚本运行时要求 PowerShell 7.5+。当前 Beta 已在 Windows 10.0.22621 与
+  PowerShell 7.6.3 上验证，尚未验证 macOS 和 Linux 执行兼容性。
+- v0.3.0-beta.1 是早期公开版本，计划 Schema 后续可能演进。
 
 ## 安全模型
 

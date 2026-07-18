@@ -93,7 +93,8 @@ cp -R skills/adaptive-agent-orchestrator \
   ~/.codex/skills/adaptive-agent-orchestrator
 ```
 
-PowerShell 7 is required to execute the bundled deterministic scripts.
+PowerShell 7.5 or later is required to execute the bundled deterministic
+scripts.
 
 ## Quick start
 
@@ -186,7 +187,7 @@ performing any authorized external action.
 
 ## Validation
 
-The v0.3.0 distribution is checked by:
+The v0.3.0-beta.1 distribution is checked by:
 
 - PowerShell parser validation for all bundled scripts;
 - 53 self-test assertions;
@@ -212,9 +213,10 @@ not a standalone agent hosting platform.
   on the controller and execution surface.
 - Natural-language context exclusions cannot erase history already injected by
   a host. Start fresh workers with only the declared packet and input artifacts.
-- PowerShell 7 is the supported script runtime. Cross-platform CI currently
-  validates the Windows execution path.
-- v0.3.0 should be treated as an early public release; plan schemas may evolve.
+- PowerShell 7.5+ is the supported script runtime. This beta is verified on
+  Windows 10.0.22621 with PowerShell 7.6.3; macOS and Linux execution have not
+  been verified.
+- v0.3.0-beta.1 is an early public release; plan schemas may evolve.
 
 ## Security model
 

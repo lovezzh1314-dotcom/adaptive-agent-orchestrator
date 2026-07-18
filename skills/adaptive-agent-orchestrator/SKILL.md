@@ -128,7 +128,8 @@ After validation, write the bounded handoff declared by the node:
 ```powershell
 pwsh -File scripts/New-ThreadHandoff.ps1 `
   -RunDirectory <run-directory> -NodeId <id> `
-  -Summary <bounded-summary> -NextAction <exact-next-action>
+  -Summary <bounded-summary> -RiskDisposition <none|open|mitigated> `
+  -NextAction <exact-next-action>
 ```
 
 ## Apply quality gates

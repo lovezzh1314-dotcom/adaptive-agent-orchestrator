@@ -2,43 +2,68 @@
 
 [English](README.md) · [安装](#安装) · [工作原理](#工作原理) · [当前限制](#当前限制)
 
-`adaptive-agent-orchestrator` 是一个用于规划和约束 Agent 团队的 Codex
-Skill。它把复杂需求转换成显式工作流，并提供角色契约、依赖门、隔离写入
-范围、证据要求、线程轮换、紧凑交接和确定性的完成检查。
+`adaptive-agent-orchestrator` 是一个 Codex Skill：在协调真正独立的工作流
+时，减少重复上下文和重复推理。它提供单 Agent 快速路径、引用优先的 Worker
+输入、紧凑任务包与 handoff、渐进派遣、按风险审阅、差量重试、隔离写入所有
+权和确定性完成检查。
 
-它解决的不是“怎么多开几个 Agent”，而是更困难的问题：
-**怎么避免这些 Agent 互相打架、污染上下文或虚假完成。**
+目标是降低完整任务的总 Token 消耗。用户不需要配置 Token budget；Skill
+也不会假装能预测一个开放式持续改进任务的最终消耗。节省效果必须由公平的
+端到端 benchmark 证明。
 
 ## 为什么值得使用？
 
-多数多 Agent 失败，本质上都是协调失败：
+- **减少上下文复制：** Worker 接收路径、来源 ID、产物指针和必要片段，
+  而不是重复复制完整对话。
+- **限制上下文选择：** 项目根目录、全部文件等宽泛占位引用会被拒绝；可选
+  的选择理由只留在主 Agent 控制面，不进入 Worker prompt。
+- **渐进披露：** Skill 正文保持精简；reference 和项目文件只在当前工作流
+  真正需要时读取。
+- **默认单 Agent：** 小任务、强顺序、高上下文重叠和窄范围修改留在主
+  Agent。
+- **渐进派遣：** 第一波只有一个 Worker；后续 Worker 必须依赖已验证结果
+  或拥有不重叠的上下文。
+- **直接 Worker 快速路径：** 单个临时只读 Worker 不创建持久计划、日志或
+  存储角色，也不创建缩小版状态机。
+- **明确角色寿命：** 一次性、项目级和用户拥有角色不会混在一起；用户明确
+  要求复用的角色不会被系统自动降级或删除。
+- **按风险审阅：** 低风险跳过 Reviewer；中风险抽查关键输出；高风险才使用
+  一个独立 Reviewer。
+- **差量重试：** 只传原产物指针、失败证据和修复指令，不重放整个任务包；
+  只有同一哈希计划中已记录为失败的同一节点才能进入差量模式。
+- **单一总控：** Worker 不能递归创建 Worker。
+- **可恢复执行：** 不可变计划、哈希链事件、仅在恢复/复用需要时生成的
+  handoff、写入范围检查和可执行完成门。
 
-- Worker 的职责含糊或写入范围重叠；
-- 一条长期线程混入无关任务和多个版本；
-- Agent 没有证据和产物检查就宣布完成；
-- 重试继续使用已经污染或故障的旧上下文；
-- 虽然设置了 Reviewer，但审查意见没有正式采纳或驳回记录。
+## 设计参考
 
-这个 Skill 把这些约束变成可验证的契约：
+v0.4 从 GitHub 一手来源中只吸收狭窄、可验证的机制：
 
-- **单一总控：** Worker 禁止递归创建更多 Worker。
-- **有界执行：** 计划明确限制尝试次数、并发、波次、提问和写入范围。
-- **角色契约：** 结构化定义身份、职责、非目标、输入、产物、证据规则和
-  升级条件。
-- **上下文卫生：** 项目、角色、工作流和执行线程是四个不同对象，默认
-  使用全新执行线程。
-- **可恢复状态：** 计划带哈希，生命周期事件写入哈希链式追加日志。
-- **可信交接：** handoff 不可覆盖、限制完整载荷大小，并通过 SHA-256
-  绑定到后续复用任务。
-- **真实完成门：** 必需节点、产物、证据和人工决策全部通过后才能完成。
+- [Agent Skills specification](https://github.com/agentskills/agentskills)：
+  metadata → Skill 正文 → 按需资源的渐进披露；
+- [OpenAI Skill Creator](https://github.com/openai/skills/blob/main/skills/.system/skill-creator/SKILL.md)：
+  Skill 只保留任务必需指令，脚本无需读入模型上下文即可执行；
+- [Supabase Agent Skills guidance](https://github.com/supabase/agent-skills/blob/main/AGENTS.md)：
+  每一段文字都必须证明自己的 Token 价值，高级细节放入 references；
+- [Superpowers parallel-agent guidance](https://github.com/obra/superpowers/blob/main/skills/dispatching-parallel-agents/SKILL.md)：
+  只拆独立问题域，并隔离 Worker 上下文；
+- [Acontext](https://github.com/memodb-io/Acontext)：按需读取明确的 Skill
+  文件，而不是把不透明记忆注入每次上下文；
+- [oh-my-codex](https://github.com/Yeachan-Heo/oh-my-codex)：把 economy
+  路由作为产品目标。
 
-## 仓库包含什么？
+我们明确不照搬冗长强制思考仪式、实时 DAG 重写、多 Reviewer ensemble、
+完整日志回灌或面向用户的 Token budget。GPT‑5.6 本来就会普通拆分和工具
+选择，重复教学只会增加过度思考和上下文成本。
+
+## 包含文件
 
 ```text
 skills/adaptive-agent-orchestrator/
 ├── SKILL.md
 ├── agents/openai.yaml
 ├── references/
+│   ├── context-efficiency.md
 │   ├── evaluation.md
 │   ├── example-plan.json
 │   ├── role-system.md
@@ -53,14 +78,15 @@ skills/adaptive-agent-orchestrator/
     ├── New-ThreadHandoff.ps1
     ├── New-WorkerPacket.ps1
     ├── Orchestration.Common.ps1
+    ├── Test-OrchestrationBenchmark.ps1
+    ├── Test-OrchestrationBenchmarkSuite.ps1
     ├── Test-OrchestrationCompletion.ps1
+    ├── Test-OrchestrationEfficiency.ps1
     ├── Test-OrchestrationPlan.ps1
     └── Test-Self.ps1
 ```
 
 ## 安装
-
-### 让 Codex 安装
 
 对 Codex 说：
 
@@ -68,123 +94,82 @@ skills/adaptive-agent-orchestrator/
 $skill-installer install https://github.com/lovezzh1314-dotcom/adaptive-agent-orchestrator/tree/main/skills/adaptive-agent-orchestrator
 ```
 
-安装完成后重启 Codex，使它重新发现这个 Skill。
-
-### 手动安装
-
-必须复制完整 Skill 目录，不能只复制 `SKILL.md`。
-
-Windows：
-
-```powershell
-Copy-Item -Recurse `
-  .\skills\adaptive-agent-orchestrator `
-  "$HOME\.codex\skills\adaptive-agent-orchestrator"
-```
-
-macOS 或 Linux：
-
-```bash
-cp -R skills/adaptive-agent-orchestrator \
-  ~/.codex/skills/adaptive-agent-orchestrator
-```
-
-运行附带的确定性脚本需要 PowerShell 7.5 或更高版本。
+安装后重启 Codex。手动安装时，把完整
+`skills/adaptive-agent-orchestrator` 目录复制到
+`$HOME/.codex/skills/adaptive-agent-orchestrator`。确定性脚本需要
+PowerShell 7.5 或更高版本。
 
 ## 快速开始
 
-显式调用 Skill：
-
 ```text
-使用 $adaptive-agent-orchestrator，把这个仓库迁移任务拆成边界明确的工作流，
-分配清晰角色，预留独立 Reviewer，并在完成前强制检查产物和证据。
-```
-
-更多例子：
-
-```text
-使用 $adaptive-agent-orchestrator 规划一个并行调研项目。不同 Worker 分别负责
-不同来源，并设置事实验证者和最终综合质量门。
+只有当这个迁移任务包含真正独立的工作流时，才使用
+$adaptive-agent-orchestrator。共享上下文留在主 Agent，Worker 只拿引用，
+并且渐进派遣。
 ```
 
 ```text
-使用 $adaptive-agent-orchestrator 创建一个需求预测方法审阅者角色。调度之前，
-先协助我定义它的身份、非目标、证据规则、提问条件和升级条件。
+使用 $adaptive-agent-orchestrator 创建一个需求预测 Reviewer 角色。派遣前
+协助我定义身份、非目标、证据规则、提问条件和升级条件。
 ```
 
 ```text
-使用 $adaptive-agent-orchestrator 从计划和事件日志恢复这个中断的 Agent 工作流，
-不要复用已经失败的执行上下文。
+使用 $adaptive-agent-orchestrator 从计划和事件日志恢复中断的工作流，不要
+重放失败上下文。
 ```
 
-这个 Skill 会先判断协调收益是否大于成本。简单、强顺序任务应留在主 Agent
-中完成。
+## 与官方 Codex subagent 的区别
 
-## 与 Codex 官方 subagent 的区别
-
-[Codex 官方 subagent](https://learn.chatgpt.com/docs/agent-configuration/subagents)
-是底层执行能力：Codex 可以并行创建专门 Agent、配置自定义 Agent、汇总结果，
-并在支持的客户端中显示它们的线程。对于“开一个安全 Reviewer，再开一个测试
-Reviewer”这类直接任务，官方功能非常合适。
-
-Adaptive Agent Orchestrator 是建立在这种执行能力之上的**治理层**，不是声称
-替代官方功能。
+官方 subagent 是执行原语；本 Skill 是它上面的上下文效率和治理层，不替代
+官方功能。
 
 | 能力 | 官方 subagent | Adaptive Agent Orchestrator |
 | --- | --- | --- |
-| 一次性快速委派 | 原生支持，而且更轻便 | 对简单任务主动让路 |
-| 并行执行 Agent | 原生支持 | 可以把它作为一种执行拓扑 |
-| 自定义 Agent 指令 | 通过 Agent 配置文件支持 | 额外协助定义非目标、证据、提问和升级契约 |
-| 任务依赖关系 | 主要由提示词和主 Agent 协调 | 预先验证 DAG，并强制依赖门 |
-| 写入所有权 | 依赖提示词和 sandbox 配置 | 执行前拒绝重叠写入范围 |
-| 重试上下文 | 由当前会话负责管理 | 显式区分 fresh/reuse，并在故障、范围或版本变化时强制换线程 |
-| 持久恢复 | 依赖线程历史与返回摘要 | 不可变计划哈希、追加事件日志、状态重放和紧凑 handoff |
-| 交接完整性 | 以摘要为主 | 限制完整大小、不可覆盖，并使用 SHA-256 绑定 |
-| 完成判断 | 主 Agent 汇总结果 | 确定性检查节点、产物、证据和人工决策 |
-| 审计能力 | 可以查看 Agent 线程 | 结构化生命周期、意见处置、证据指针和篡改检测 |
+| 一次性委派 | 原生、更简单 | 主动让路 |
+| 上下文选择 | 依赖总控判断 | 引用优先、排除项、重叠检查 |
+| 派遣时机 | Prompt 驱动 | 第一波单 Worker，后续依赖已验证结果 |
+| 审阅 | 依赖总控判断 | 按风险或抽样，不默认多 Reviewer |
+| 重试 | 依赖当前会话 | 差量修复任务包与失败分类 |
+| 写入所有权 | 依赖 Prompt/沙箱 | 执行前拒绝重叠 Writer |
+| 恢复 | 线程历史与摘要 | 哈希计划、追加日志、不可变 handoff |
+| 完成判断 | 主 Agent 汇总 | 节点、产物、证据和人工门检查 |
+| Token 节省 | 不自动测量 | 离线端到端 benchmark 门 |
 
-任务短、以读取为主、结果容易核验时，直接使用官方 subagent 更简单。出现多个
-写入者、多阶段依赖、持久角色、重试恢复、独立质量门，或者需要证明“为什么
-已经完成”时，这个 Skill 才真正体现优势。
-
-我们的优势不是“能开更多 Agent”，而是：
-**每个 Agent 的歧义更少、所有权更明确，并且整个过程可以恢复和审计。**
+短而明确的委派直接用官方 subagent。协调本身会制造风险或重复上下文时，
+再使用本 Skill。
 
 ## 工作原理
 
 ```text
-用户请求
-   ↓
-识别复杂度和风险
-   ↓
-定义角色与工作流计划
-   ↓
-验证 DAG、写入范围、预算和上下文契约
-   ↓
-按依赖关系分波次调度 Worker
-   ↓
-记录证据和追加式生命周期事件
-   ↓
-独立审查 → 主 Agent 正式处置
-   ↓
-产物、证据与人工决策完成门
+请求
+  ↓
+除非工作流真正独立，否则走单 Agent
+  ↓
+引用优先计划 + 上下文重叠检查
+  ↓
+第一波一个 Worker
+  ↓
+验证证据与产物
+  ↓
+只有产生新采纳价值时才启动后续波次
+  ↓
+按风险审阅 + 主 Agent 直接整合
+  ↓
+产物、证据和人工决策完成门
 ```
 
-附带脚本负责确定性的计划校验和生命周期状态。Codex 主 Agent 仍负责选择当前
-可用的执行工具、创建真实 Worker、读取线程状态、整合结果，并执行用户已经
-授权的外部操作。
+脚本负责结构和生命周期状态校验。Codex 主 Agent 仍负责选择可用执行工具、
+创建 Worker、读取真实线程、整合结果和执行已授权的外部动作。
 
 ## 验证情况
 
-v0.3.0-beta.1 发布包目前通过：
+v0.4.1-beta.1 候选版本目前通过：
 
-- 全部 PowerShell 脚本语法解析；
-- 53 项自测断言；
-- 16 种非法计划拒绝测试；
-- 计划、运行元数据和事件日志篡改测试；
-- 依赖、幂等、角色、提问、证据、handoff 和线程轮换测试。
-
-本地运行：
+- 13 个 PowerShell 脚本语法解析；
+- 121 项自测断言；
+- 28 份故意构造的非法负面测试计划均被正确拦截；
+- 计划、元数据、日志、handoff、依赖、幂等、所有权、上下文重叠、渐进
+  派遣、短任务包和完成门测试；
+- 一个合成的单案例 benchmark 测试。
 
 ```powershell
 pwsh -NoProfile -File `
@@ -193,30 +178,25 @@ pwsh -NoProfile -File `
 
 ## 当前限制
 
-这是一个治理 Skill 和确定性契约/状态工具集，不是独立的 Agent 托管平台。
-
-- 它本身没有提供能够在所有环境中创建 Codex 线程的通用适配器。
-- 真实线程健康状态、工作目录和继承轮数仍需要主 Agent 与执行平台核验。
-- 如果宿主已经注入历史上下文，自然语言 `excluded` 无法把它物理删除；fresh
-  Worker 应当只接收声明的任务包和输入产物。
-- 脚本运行时要求 PowerShell 7.5+。当前 Beta 已在 Windows 10.0.22621 与
-  PowerShell 7.6.3 上验证，尚未验证 macOS 和 Linux 执行兼容性。
-- v0.3.0-beta.1 是早期公开版本，计划 Schema 后续可能演进。
+- 这是治理 Skill，不是独立 Agent 托管平台。
+- 自然语言排除项无法删除宿主已经注入的历史；应使用 fresh Worker 和明确
+  输入引用。
+- 精确重叠检查无法发现“不同名称但语义相同”的材料，主 Agent 仍需拒绝。
+- 只有执行面提供 telemetry 时，Token 用量才可用于诊断。
+- 中位数节省 20% 是发布 benchmark 目标，不是已经证实的生产声明；合成
+  测试不能证明真实 Token 节省。
+- 当前只在 Windows 10 + PowerShell 7.6.3 验证，macOS/Linux 尚未验证。
 
 ## 安全模型
 
-Skill 会拒绝递归委派、重叠写入范围、不安全相对路径、重解析点穿越、伪造的
-计划元数据、事件日志篡改、错误 handoff 哈希，以及没有用户决策证据的人工门
-完成事件。
+Skill 拒绝递归委派、Writer 范围重叠、不安全路径、伪造运行元数据、日志
+篡改、未验证 handoff 哈希，以及没有用户证据的人工门完成。发布、删除、
+支付、账号修改和生产操作仍由主 Agent 持有，并需要用户授权。
 
-外部发布、删除、付款、账户修改和生产操作始终由主 Agent 执行，并需要用户
-明确授权。
+## 贡献
 
-## 参与贡献
+见 [CONTRIBUTING.md](CONTRIBUTING.md)。优先提交可复现失败案例和紧凑测试。
 
-参见 [CONTRIBUTING.md](CONTRIBUTING.md)。相比宽泛的功能建议，我们更欢迎
-可以复现的失败案例和紧凑的自动化测试。
+## License
 
-## 许可证
-
-MIT，详见 [LICENSE](LICENSE)。
+MIT，见 [LICENSE](LICENSE)。

@@ -3,7 +3,12 @@ param(
     [Parameter(Mandatory)][string] $PlanPath,
     [Parameter(Mandatory)][string] $NodeId,
     [Parameter(Mandatory)][string] $WorkspaceRoot,
-    [string] $OutputPath
+    [string] $OutputPath,
+    [string] $RetryOutputRef,
+    [string] $FailureEvidence,
+    [string] $RepairInstruction,
+    [string] $RetryRunDirectory,
+    [switch] $Full
 )
 
 Set-StrictMode -Version Latest
@@ -21,6 +26,42 @@ if ($node.kind -ne 'agent') {
 }
 $role = @($plan.roles | Where-Object { $_.id -eq $node.role_id }) |
     Select-Object -First 1
+$retryValues = @($RetryOutputRef, $FailureEvidence, $RepairInstruction)
+$isDeltaRetry = @($retryValues | Where-Object {
+    -not [string]::IsNullOrWhiteSpace($_)
+}).Count -gt 0
+if ($isDeltaRetry -and @($retryValues | Where-Object {
+    [string]::IsNullOrWhiteSpace($_)
+}).Count -gt 0) {
+    throw 'Delta retry requires RetryOutputRef, FailureEvidence, and RepairInstruction.'
+}
+if ($isDeltaRetry -and [string]::IsNullOrWhiteSpace($RetryRunDirectory)) {
+    throw 'Delta retry requires RetryRunDirectory from the failed execution.'
+}
+if (-not $isDeltaRetry -and -not [string]::IsNullOrWhiteSpace($RetryRunDirectory)) {
+    throw 'RetryRunDirectory is only valid for delta retry.'
+}
+if ($isDeltaRetry -and $Full) {
+    throw 'Delta retry cannot use Full packet mode.'
+}
+if ($isDeltaRetry) {
+    if (-not (Test-Path -LiteralPath $RetryRunDirectory -PathType Container)) {
+        throw "Delta retry run directory does not exist: '$RetryRunDirectory'."
+    }
+    $retryState = & (Join-Path $scriptRoot 'Get-OrchestrationState.ps1') `
+        -RunDirectory $RetryRunDirectory | ConvertFrom-Json -Depth 100
+    $suppliedPlanHash = Get-TextSha256 (
+        Get-Content -LiteralPath $PlanPath -Raw
+    )
+    if ([string]$retryState.plan_hash -ne $suppliedPlanHash) {
+        throw 'Delta retry plan does not match the failed execution plan.'
+    }
+    $retryNode = @($retryState.nodes | Where-Object { $_.id -eq $NodeId }) |
+        Select-Object -First 1
+    if ($null -eq $retryNode -or [string]$retryNode.status -ne 'failed') {
+        throw "Delta retry requires node '$NodeId' to be in failed state."
+    }
+}
 
 function Join-Bullets {
     param([object[]] $Items)
@@ -36,6 +77,7 @@ $dependencies = if (@($node.depends_on).Count) {
     @($node.depends_on) -join ', '
 } else { 'none' }
 $contextInputs = Join-Bullets @($node.context.inputs)
+$contextReferences = Join-Bullets @($node.context.inputs)
 $excludedContext = Join-Bullets @($node.context.excluded)
 $priorContext = if ($node.context.session_policy -eq 'reuse') {
     $root = (Resolve-Path -LiteralPath $WorkspaceRoot).Path.TrimEnd('\', '/')
@@ -83,8 +125,89 @@ Maximum inherited turns: $($node.context.max_prior_turns)
 } else {
     'Start from a fresh execution session. Use only the explicit context below.'
 }
+$handoffText = if ($node.context.handoff_required) {
+@"
+Handoff: at most $($node.context.handoff_max_chars) characters to
+$($node.context.handoff_path), containing decisions, evidence, risks,
+risk_disposition, and exact next_action.
+"@
+} else {
+    'Handoff: none. Return the compact result directly; do not create a handoff artifact.'
+}
 
-$packet = @"
+$packet = if ($isDeltaRetry) {
+@"
+# Delta repair contract
+
+Identity: $($role.identity_statement)
+Run/node/role: $($plan.run_id) / $($node.id) / $($role.display_name)
+Original output: $RetryOutputRef
+Failure evidence: $FailureEvidence
+Repair only: $RepairInstruction
+
+Do not repeat the original analysis, reload unrelated context, or expand scope.
+Return the corrected artifact or smallest patch plus typed evidence for:
+$(Join-Bullets @($node.acceptance))
+"@
+} elseif (-not $Full) {
+@"
+# Worker contract
+
+Identity: $($role.identity_statement)
+Run/node/role: $($plan.run_id) / $($node.id) / $($role.display_name)
+Task: $($node.task)
+Mission: $($role.mission)
+Dependencies: $dependencies
+
+You are a worker, never the orchestrator. Do not create or delegate to agents.
+
+## Context
+
+Session: $($node.context.session_policy)
+$priorContext
+Read only these references:
+$contextReferences
+
+Exclude:
+$excludedContext
+
+Do not restate inputs or narrate routine tool use. On failure, return only the
+prior-output pointer, failure evidence, and exact repair instruction.
+
+## Output contract
+
+Deliver:
+$(Join-Bullets @($role.deliverables))
+
+Acceptance:
+$(Join-Bullets @($node.acceptance))
+
+Evidence:
+$(Join-Bullets @($role.evidence_rules))
+
+Return: conclusion; evidence/changes; validation; unresolved risks; questions.
+
+## Authority
+
+Role policy: $($role.tool_policy)
+Read-only: $($node.read_only)
+Write scope:
+$scopeText
+
+Non-goals:
+$(Join-Bullets @($role.non_goals))
+
+Ask only when:
+$(Join-Bullets @($role.question_policy.ask_when))
+Maximum questions: $($role.question_policy.max_questions)
+
+Escalate when:
+$(Join-Bullets @($role.escalation_conditions))
+
+$handoffText
+"@
+} else {
+@"
 # Worker identity
 
 $($role.identity_statement)
@@ -104,6 +227,13 @@ Dependencies: $dependencies
 Workflow: $($node.workflow)
 Capability class: $($node.capability)
 Effort class: $($node.effort)
+
+## Context efficiency
+
+Read only the explicit references needed for the acceptance checks. Do not
+restate supplied context, narrate routine tool use, or produce speculative
+alternatives outside the deliverables. Return the smallest evidence-backed
+handoff that lets the controller continue without repeating completed work.
 
 ## Execution context
 
@@ -177,13 +307,9 @@ $(Join-Bullets @($role.escalation_conditions))
 
 ## Handoff
 
-Before the controller closes or rotates this execution session, return a
-compact handoff no longer than $($node.context.handoff_max_chars) characters.
-It must contain conclusions, decisions, evidence pointers, artifacts,
-an explicit risk disposition (`none`, `open`, or `mitigated`), unresolved
-risks, and the exact next action. The controller stores it at:
-$($node.context.handoff_path)
+$handoffText
 "@
+}
 
 if ($OutputPath) {
     $parent = Split-Path -Parent $OutputPath

@@ -22,7 +22,9 @@ function Get-OrchestrationEventHash {
         'workspace_root',
         'policy_version', 'actor', 'node_id', 'role_id', 'prior_state', 'status',
         'message', 'thread_id', 'artifact', 'topology', 'capability',
-        'effort', 'wave', 'attempt', 'budget_delta', 'error_class',
+        'effort', 'wave', 'attempt', 'execution_slot_delta', 'error_class',
+        'input_tokens_delta', 'output_tokens_delta',
+        'coordination_tokens_delta', 'usage_source',
         'decision', 'human_actor', 'evidence', 'idempotency_key',
         'request_fingerprint'
     )

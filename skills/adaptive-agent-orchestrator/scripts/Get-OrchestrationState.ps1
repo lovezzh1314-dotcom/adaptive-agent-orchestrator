@@ -58,6 +58,7 @@ $nodeStates = foreach ($node in $plan.nodes) {
         kind = $node.kind
         role_id = if ($node.kind -in @('agent', 'main')) { $node.role_id } else { $null }
         purpose = if ($node.kind -eq 'agent') { $node.purpose } else { $null }
+        wave = if ($node.kind -eq 'agent') { [int]$node.wave } else { $null }
         dependencies = @($node.depends_on)
         status = if ($latest) { $latest.status } else { 'planned' }
         thread_id = if ($lastThread) { $lastThread.thread_id } else { $null }
@@ -69,10 +70,26 @@ $nodeStates = foreach ($node in $plan.nodes) {
     }
 }
 
-$terminalSuccess = @('validated', 'adopted', 'archived')
+$terminalSuccess = @('adopted', 'archived')
+$waveTerminal = @('adopted', 'archived', 'rejected', 'cancelled')
+$openAgentWaves = @(
+    $nodeStates | Where-Object {
+        $_.kind -eq 'agent' -and $_.status -notin $waveTerminal
+    } | ForEach-Object { [int]$_.wave }
+)
+$earliestOpenWave = if ($openAgentWaves.Count) {
+    ($openAgentWaves | Measure-Object -Minimum).Minimum
+} else { $null }
+$inputTokens = @($events | Measure-Object -Property input_tokens_delta -Sum).Sum
+$outputTokens = @($events | Measure-Object -Property output_tokens_delta -Sum).Sum
+$coordinationTokens = @(
+    $events | Measure-Object -Property coordination_tokens_delta -Sum
+).Sum
+$totalTokens = [int64]$inputTokens + [int64]$outputTokens
 $ready = @(
     $nodeStates | Where-Object {
         $_.status -eq 'planned' -and
+        ($_.kind -ne 'agent' -or [int]$_.wave -eq [int]$earliestOpenWave) -and
         (@($_.dependencies | Where-Object {
             $dependency = $_
             ($nodeStates | Where-Object { $_.id -eq $dependency }).status -notin $terminalSuccess
@@ -92,6 +109,15 @@ $state = [ordered]@{
     launch_attempts = @($events | Where-Object { $_.status -eq 'launch_reserved' }).Count
     retry_attempts = $retryUsed
     ready_nodes = $ready
+    usage = [ordered]@{
+        telemetry = if (@($events | Where-Object {
+            $_.usage_source -eq 'actual'
+        }).Count) { 'actual-or-mixed' } else { 'estimate' }
+        input_tokens = [int64]$inputTokens
+        output_tokens = [int64]$outputTokens
+        coordination_tokens = [int64]$coordinationTokens
+        total_tokens = $totalTokens
+    }
     nodes = @($nodeStates)
 }
 

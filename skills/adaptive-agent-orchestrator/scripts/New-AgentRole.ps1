@@ -14,6 +14,8 @@ param(
     [string] $ToolPolicy,
     [Parameter(Mandatory)][string[]] $EscalationConditions,
     [Parameter(Mandatory)][string] $IdentityStatement,
+    [ValidateSet('task', 'project', 'user-owned')]
+    [string] $Lifetime = 'task',
     [ValidateRange(0, 3)][int] $MaxQuestions = 2,
     [string[]] $AskWhen = @('A required input is missing'),
     [switch] $UserDefined,
@@ -41,6 +43,9 @@ $role = [ordered]@{
     escalation_conditions = @($EscalationConditions)
     identity_statement = $IdentityStatement
     user_defined = [bool]$UserDefined
+}
+if ($Lifetime -ne 'task') {
+    $role.Insert(1, 'lifetime', $Lifetime)
 }
 
 $json = $role | ConvertTo-Json -Depth 20

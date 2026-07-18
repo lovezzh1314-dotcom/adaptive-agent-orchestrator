@@ -50,7 +50,11 @@ Every task packet must say:
 - its acceptance tests;
 - how to report missing information.
 
-## Lifecycle states
+## Durable lifecycle states
+
+These states apply only after the durable control path is justified. A direct
+temporary read-only worker does not create a plan, journal, stored role, or
+reduced four-state lifecycle.
 
 Use:
 
@@ -82,7 +86,7 @@ Require a human gate for:
 - payment, account, permission, or production changes;
 - destructive or irreversible action;
 - material scope expansion;
-- a budget increase beyond the approved plan.
+- an execution-capacity increase beyond the approved plan.
 
 Workers may prepare these actions but may not execute them.
 

@@ -15,6 +15,8 @@ when task scope or version changes, or when the thread becomes unhealthy.
 Every role contains:
 
 - `id`: stable lowercase hyphenated identifier;
+- optional `lifetime`: defaults to `task`; declare `project` or `user-owned`
+  only when reuse changes lifecycle behavior;
 - `display_name`: user-facing name;
 - `mission`: one outcome-focused sentence;
 - `responsibilities`: work the role must perform;
@@ -30,6 +32,13 @@ Every role contains:
 - `identity_statement`: a concise first-person task identity included in the
   worker packet;
 - `user_defined`: whether this came from the user or built-in catalog.
+
+Missing or `task` roles exist only for one durable run. `project` roles may be reused
+within the same project under the same contract. `user-owned` roles are named,
+reusable roles explicitly requested or approved by the user; the controller
+must not silently rewrite, delete, unpin, or downgrade them. A direct
+temporary read-only worker is not a stored role and receives no persistent
+role ID.
 
 No role may create workers, expand the graph, approve its own output, execute
 external or irreversible actions, or override the plan.
@@ -76,6 +85,7 @@ pwsh -File scripts/New-AgentRole.ps1 `
   -Responsibilities <items> -NonGoals <items> `
   -RequiredInputs <items> -Deliverables <items> `
   -EvidenceRules <items> -ToolPolicy read-only `
+  -Lifetime user-owned `
   -EscalationConditions <items> -IdentityStatement <statement>
 ```
 

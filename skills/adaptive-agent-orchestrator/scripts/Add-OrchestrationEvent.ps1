@@ -26,6 +26,18 @@ param(
     [string[]] $Evidence = @(),
     [int] $Wave = 1,
 
+    [ValidateRange(0, 1000000000)]
+    [int64] $InputTokensDelta = 0,
+
+    [ValidateRange(0, 1000000000)]
+    [int64] $OutputTokensDelta = 0,
+
+    [ValidateRange(0, 1000000000)]
+    [int64] $CoordinationTokensDelta = 0,
+
+    [ValidateSet('none', 'estimate', 'actual')]
+    [string] $UsageSource = 'none',
+
     [ValidateSet('startup_unmaterialized', 'runtime_transient',
         'model_incompatible', 'permission_denied', 'task_invalid',
         'output_invalid', 'ownership_conflict', 'unknown')]
@@ -50,11 +62,26 @@ $plan = $planText | ConvertFrom-Json -Depth 100
 $runMetadata = Get-Content -LiteralPath $runPath -Raw | ConvertFrom-Json -Depth 20
 $node = @($plan.nodes | Where-Object { $_.id -eq $NodeId }) | Select-Object -First 1
 if ($null -eq $node) { throw "Unknown node id '$NodeId'." }
+$effectiveWave = if ($node.kind -eq 'agent') {
+    [int]$node.wave
+} else {
+    $Wave
+}
 if ($Status -in @('failed', 'unknown') -and [string]::IsNullOrWhiteSpace($ErrorClass)) {
     throw "Status '$Status' requires ErrorClass."
 }
 if ($Status -notin @('failed', 'unknown') -and -not [string]::IsNullOrWhiteSpace($ErrorClass)) {
     throw "ErrorClass is only valid for failed or unknown status."
+}
+$usageDelta = $InputTokensDelta + $OutputTokensDelta
+if ($CoordinationTokensDelta -gt $usageDelta) {
+    throw 'Coordination Token delta must be a subset of input plus output Tokens.'
+}
+if ($UsageSource -eq 'none' -and $usageDelta -gt 0) {
+    throw 'Token deltas require UsageSource estimate or actual.'
+}
+if ($UsageSource -ne 'none' -and $usageDelta -eq 0) {
+    throw 'UsageSource estimate or actual requires a non-zero Token delta.'
 }
 $cleanEvidence = @($Evidence | Where-Object {
     -not [string]::IsNullOrWhiteSpace($_)
@@ -74,8 +101,12 @@ $requestFingerprint = Get-TextSha256 (
         decision = if ($Decision) { $Decision } else { $null }
         human_actor = if ($HumanActor) { $HumanActor } else { $null }
         evidence = $cleanEvidence
-        wave = $Wave
+        wave = $effectiveWave
         error_class = if ($ErrorClass) { $ErrorClass } else { $null }
+        input_tokens_delta = $InputTokensDelta
+        output_tokens_delta = $OutputTokensDelta
+        coordination_tokens_delta = $CoordinationTokensDelta
+        usage_source = $UsageSource
     } | ConvertTo-Json -Compress -Depth 10
 )
 
@@ -143,10 +174,20 @@ try {
         $latestStates[[string]$journalEvent.node_id] = [string]$journalEvent.status
     }
     if ($priorState -eq 'planned') {
-        $dependencySuccess = @('validated', 'adopted', 'archived')
+        $dependencySuccess = @('adopted', 'archived')
         foreach ($dependency in @($node.depends_on)) {
             if ($latestStates[[string]$dependency] -notin $dependencySuccess) {
-                throw "Node '$NodeId' cannot start before dependency '$dependency' is validated."
+                throw "Node '$NodeId' cannot start before dependency '$dependency' is adopted."
+            }
+        }
+        if ($node.kind -eq 'agent' -and $Status -eq 'launch_reserved') {
+            $earlierWaveTerminal = @('adopted', 'archived', 'rejected', 'cancelled')
+            foreach ($earlierNode in @($plan.nodes | Where-Object {
+                $_.kind -eq 'agent' -and [int]$_.wave -lt [int]$node.wave
+            })) {
+                if ($latestStates[[string]$earlierNode.id] -notin $earlierWaveTerminal) {
+                    throw "Node '$NodeId' cannot start before earlier-wave node '$($earlierNode.id)' reaches a terminal state."
+                }
             }
         }
     }
@@ -214,7 +255,7 @@ try {
     }
 
     $attempt = @($history | Where-Object { $_.status -eq 'launch_reserved' }).Count
-    $budgetDelta = 0
+    $executionSlotDelta = 0
     if ($Status -eq 'launch_reserved') {
         $attempt++
         if ($attempt -gt [int]$node.max_attempts -or
@@ -224,7 +265,7 @@ try {
 
         $launchEvents = @($events | Where-Object { $_.status -eq 'launch_reserved' })
         if ($launchEvents.Count -ge [int]$plan.limits.max_total_agent_nodes) {
-            throw 'Total agent execution budget is exhausted.'
+            throw 'Total agent execution slots are exhausted.'
         }
         $retryEvents = @(
             $launchEvents | Group-Object node_id | ForEach-Object {
@@ -250,13 +291,13 @@ try {
             $latestByNode.Values | Where-Object { $_ -in $activeStates }
         ).Count
         if ($activeCount -ge [int]$plan.limits.max_concurrent_nodes) {
-            throw 'Concurrent agent budget is exhausted.'
+            throw 'Concurrent agent slots are exhausted.'
         }
         $waveCount = @(
-            $launchEvents | Where-Object { [int]$_.wave -eq $Wave }
+            $launchEvents | Where-Object { [int]$_.wave -eq $effectiveWave }
         ).Count
         if ($waveCount -ge [int]$plan.limits.max_new_nodes_per_wave) {
-            throw "Wave $Wave exceeds max_new_nodes_per_wave."
+            throw "Wave $effectiveWave exceeds max_new_nodes_per_wave."
         }
 
         $launchedNodeIds = @($launchEvents | ForEach-Object { $_.node_id })
@@ -272,14 +313,7 @@ try {
         if ($remainingAfterLaunch -lt $unlaunchedVerification) {
             throw 'Launch would consume capacity reserved for planned verification nodes.'
         }
-        $budgetDelta = 1
-        if ($node.capability -eq 'ultra' -and
-            $node.ultra_authorization -eq 'escalated-after-failure') {
-            $priorNodeId = [string]$node.prior_attempt_node_id
-            if ($latestStates[$priorNodeId] -notin @('failed', 'rejected')) {
-                throw "Ultra escalation '$NodeId' requires failed prior node '$priorNodeId'."
-            }
-        }
+        $executionSlotDelta = 1
     }
 
     $event = [ordered]@{
@@ -302,9 +336,13 @@ try {
         topology = if ($kind -eq 'agent') { $node.topology } else { $kind }
         capability = if ($kind -in @('agent', 'main')) { $node.capability } else { $null }
         effort = if ($kind -in @('agent', 'main')) { $node.effort } else { $null }
-        wave = $Wave
+        wave = $effectiveWave
         attempt = $attempt
-        budget_delta = $budgetDelta
+        execution_slot_delta = $executionSlotDelta
+        input_tokens_delta = $InputTokensDelta
+        output_tokens_delta = $OutputTokensDelta
+        coordination_tokens_delta = $CoordinationTokensDelta
+        usage_source = $UsageSource
         error_class = if ($ErrorClass) { $ErrorClass } else { $null }
         decision = if ($Decision) { $Decision } else { $null }
         human_actor = if ($HumanActor) { $HumanActor } else { $null }

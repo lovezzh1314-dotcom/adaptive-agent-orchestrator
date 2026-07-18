@@ -1,7 +1,7 @@
 # Release validation receipt
 
-Release: `0.3.0-beta.1`  
-Policy version: `0.3.0`  
+Release: `0.4.1-beta.1`
+Policy version: `0.4.1`
 Date: `2026-07-18`
 
 ## Environment
@@ -36,12 +36,13 @@ python `
 ## Results
 
 - Exit code: 0
-- PowerShell scripts parsed: 10
-- Self-test assertions: 53 passed
-- Invalid-plan cases: 16 rejected
+- PowerShell scripts parsed: 13
+- Self-test assertions: 121 passed
+- Intentional invalid-plan negative cases: 28 correctly rejected
 - Skill Creator validation: `Skill is valid!`
 
-The self-test covers the deterministic local plan, role, packet, lifecycle,
-journal, handoff, and completion logic. It uses simulated thread identifiers;
-it is not evidence that a live Codex execution surface materialized or
-isolated those threads.
+The self-test covers the deterministic local plan, role, short/full packet,
+context efficiency, benchmark, usage diagnostics, lifecycle, journal, handoff,
+and completion logic. It uses simulated thread identifiers and synthetic benchmark
+metrics; it is not evidence that a live Codex execution surface materialized
+threads or achieved measured Token savings on a production task.

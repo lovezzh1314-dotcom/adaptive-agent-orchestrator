@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string] $NodeId,
     [Parameter(Mandatory)][string] $Summary,
     [string[]] $Decisions = @(),
+    [Parameter(Mandatory)][string[]] $Evidence,
     [string[]] $UnresolvedRisks = @(),
     [Parameter(Mandatory)]
     [ValidateSet('none', 'open', 'mitigated')]
@@ -29,12 +30,27 @@ $node = @($plan.nodes | Where-Object { $_.id -eq $NodeId }) |
 if ($null -eq $node -or $node.kind -ne 'agent') {
     throw "Handoffs require a known agent node: '$NodeId'."
 }
+if ($node.context.handoff_required -ne $true) {
+    throw "Node '$NodeId' does not require a handoff."
+}
 $state = & (Join-Path $scriptRoot 'Get-OrchestrationState.ps1') `
     -RunDirectory $RunDirectory | ConvertFrom-Json -Depth 100
 $nodeState = @($state.nodes | Where-Object { $_.id -eq $NodeId }) |
     Select-Object -First 1
 if ($nodeState.status -notin @('validated', 'adopted', 'archived')) {
     throw "Node '$NodeId' must be validated before creating a handoff."
+}
+$selectedEvidence = @($Evidence | Where-Object {
+    -not [string]::IsNullOrWhiteSpace([string]$_)
+} | Select-Object -Unique)
+if ($selectedEvidence.Count -eq 0) {
+    throw "Handoff '$NodeId' requires at least one selected evidence pointer."
+}
+$unknownEvidence = @($selectedEvidence | Where-Object {
+    $_ -notin @($nodeState.evidence)
+})
+if ($unknownEvidence.Count -gt 0) {
+    throw "Handoff evidence '$($unknownEvidence[0])' is not recorded for node '$NodeId'."
 }
 if ([string]::IsNullOrWhiteSpace($NextAction)) {
     throw "NextAction is required for handoff '$NodeId'."
@@ -87,7 +103,7 @@ $handoff = [ordered]@{
     status = $nodeState.status
     summary = $Summary
     decisions = @($Decisions)
-    evidence = @($nodeState.evidence)
+    evidence = $selectedEvidence
     artifact = $nodeState.artifact
     risk_disposition = $RiskDisposition
     unresolved_risks = @($UnresolvedRisks)

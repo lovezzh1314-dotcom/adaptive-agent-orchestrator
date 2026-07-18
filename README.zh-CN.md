@@ -1,6 +1,6 @@
 # Adaptive Agent Orchestrator
 
-[English](README.md) · [安装](#安装) · [工作原理](#工作原理) · [当前限制](#当前限制)
+[English](README.md) · [v0.4.2 更新说明](docs/releases/v0.4.2-beta.1.md) · [安装](#安装) · [工作原理](#工作原理) · [当前限制](#当前限制)
 
 `adaptive-agent-orchestrator` 是一个 Codex Skill：在协调真正独立的工作流
 时，减少重复上下文和重复推理。它提供单 Agent 快速路径、引用优先的 Worker

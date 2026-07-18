@@ -39,8 +39,47 @@ Read:
 - [routing-policy.md](references/routing-policy.md) for topology and model
   choice;
 - [workflow-contract.md](references/workflow-contract.md) for durable plans;
-- [role-system.md](references/role-system.md) only when a role is ambiguous or
-  the user wants a custom role.
+- [role-system.md](references/role-system.md) before materializing any worker,
+  or when selecting, creating, or reusing a role.
+
+## Explain every Worker before creation
+
+A role is a responsibility contract, not a command to create a worker. The
+main agent may adopt a role itself, defer it, or skip it when the work overlaps.
+Never fill available worker seats merely because roles exist.
+
+Before every direct or durable Worker, show its role, necessity versus main
+agent execution, concrete task, responsibilities, non-goals, input scope,
+deliverables, evidence rules, permissions, dependencies, and omission impact.
+If the user has not explicitly authorized automatic teaming, wait for approval
+or a requested change. Durable nodes record `user:<message-or-request>` for
+explicit approval or `policy:path:<project-relative-policy-file>` for automatic
+authorization;
+never infer authority from the plan itself. Render the exact preview with:
+
+```powershell
+pwsh -File scripts/New-RoleActivationPreview.ps1 `
+  -PlanPath <plan.json> -NodeId <agent-node-id>
+```
+
+After materialization, report the role, actual Worker or thread ID, status, and
+any deviation from the preview. Repeat permissions or dependencies only when
+they changed. A failed health probe is not a created Worker and does not
+consume a seat. Across one root task, the controller must count direct and
+durable Workers together and never materialize more than four, including later
+waves and retries; platform concurrency may be lower. The deterministic plan
+validator enforces four per durable run, not across separate runs. If recovery
+cannot establish the root-task count, launch no new Worker until reconciled.
+
+Use industry role packs only when a professional responsibility would improve
+the result. First list the compact catalog, then load only the selected
+contract:
+
+```powershell
+pwsh -File scripts/Get-AgentRolePreset.ps1 -Domain supply-chain
+pwsh -File scripts/Get-AgentRolePreset.ps1 `
+  -Domain supply-chain -RoleId demand-inventory-planner
+```
 
 ## Minimize context
 
@@ -111,6 +150,13 @@ context-overlap, progressive-dispatch, or delta-retry rules to force a team.
    merely to restate worker outputs.
 7. Stop optional workers when a wave adds no accepted evidence, coverage, or
    material risk reduction. The main agent may continue improving the task.
+
+For manuscripts, the main agent owns the argument spine, outline, voice,
+abstract, conclusion, and final merge. A methods or domain role may co-author
+its bounded section and return revisions to that same owner; do not reduce
+every specialist to a reviewer. Keep one independent academic reviewer for the
+quality gate. Findings return to the original section owner before final
+integration.
 
 For durable runs:
 

@@ -53,6 +53,71 @@ try {
         ConvertFrom-Json
     Assert-True $valid.valid 'Example plan should be valid.'
     Assert-True ($valid.agent_node_count -eq 2) 'Example should contain two agent nodes.'
+    $activationPreview = & (
+        Join-Path $scriptRoot 'New-RoleActivationPreview.ps1'
+    ) -PlanPath $examplePath -NodeId 'draft'
+    foreach ($requiredPreviewLabel in @(
+        'Role:', 'Mission:', 'Identity:', 'Why a Worker is needed:', 'Concrete task:',
+        'Responsibilities:', 'Non-goals:', 'Inputs and context scope:',
+        'Excluded context:', 'Topology/session:',
+        'Deliverables:', 'Evidence rules:', 'Permissions and write scope:',
+        'Dependencies:', 'If omitted:', 'Authorization basis:',
+        'Authorization evidence:'
+    )) {
+        Assert-True ($activationPreview -like "*$requiredPreviewLabel*") (
+            "Role activation preview should include '$requiredPreviewLabel'."
+        )
+    }
+    Assert-True ($activationPreview -like '*scoped-write: artifacts/draft*') (
+        'Role activation preview should expose the exact write scope.'
+    )
+    Assert-True ($activationPreview -like '*background-thread / fresh*') (
+        'Role activation preview should expose topology and session policy.'
+    )
+    Assert-True ($activationPreview -like '*Prior reviewer reasoning*') (
+        'Role activation preview should expose excluded context.'
+    )
+    Assert-True ($activationPreview -match 'Architecture Owner \[architecture-owner\]') (
+        'Role activation preview should render the selected role ID exactly.'
+    )
+
+    $roleCatalog = Get-Content -LiteralPath (
+        Join-Path $skillRoot 'references/role-pack-catalog.json'
+    ) -Raw | ConvertFrom-Json -Depth 20
+    Assert-True (@($roleCatalog.packs).Count -eq 4) (
+        'The compact catalog should contain four industry packs.'
+    )
+    foreach ($rolePack in @($roleCatalog.packs)) {
+        $packRoles = @(Get-Content -LiteralPath (
+            Join-Path (Join-Path $skillRoot 'references') $rolePack.file
+        ) -Raw | ConvertFrom-Json -Depth 50)
+        Assert-True ($packRoles.Count -ge 3 -and $packRoles.Count -le 4) (
+            "Role pack '$($rolePack.id)' should contain three or four roles."
+        )
+        Assert-True (@($packRoles.id | Select-Object -Unique).Count -eq $packRoles.Count) (
+            "Role pack '$($rolePack.id)' should use unique role IDs."
+        )
+        foreach ($presetRole in $packRoles) {
+            foreach ($field in @(
+                'id', 'display_name', 'mission', 'responsibilities', 'non_goals',
+                'required_inputs', 'deliverables', 'evidence_rules',
+                'tool_policy', 'question_policy', 'escalation_conditions',
+                'identity_statement', 'user_defined'
+            )) {
+                Assert-True ($null -ne $presetRole.PSObject.Properties[$field]) (
+                    "Preset role '$($presetRole.id)' requires '$field'."
+                )
+            }
+        }
+    }
+    $equityRole = & (Join-Path $scriptRoot 'Get-AgentRolePreset.ps1') `
+        -Domain 'equity-research' -RoleId 'valuation-analyst'
+    Assert-True ($equityRole -like '*valuation-analyst*') (
+        'An exact role query should return the selected contract.'
+    )
+    Assert-True ($equityRole -notlike '*thesis-risk-reviewer*') (
+        'An exact role query should not inject neighboring role contracts.'
+    )
     $efficiency = & (Join-Path $scriptRoot 'Test-OrchestrationEfficiency.ps1') `
         -PlanPath $examplePath | ConvertFrom-Json
     Assert-True $efficiency.valid 'Example efficiency policy should be valid.'
@@ -414,6 +479,43 @@ try {
     Assert-True ($packet -like '*Do not restate inputs*') (
         'Rendered packets should make context-minimization rules operational.'
     )
+    $startupRetryPlan = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $startupRetryPlan.limits.retry_reserve = 0
+    $startupRetryPlan.nodes[0].max_attempts = 2
+    $startupRetryPlanPath = Join-Path $testRoot 'startup-retry-plan.json'
+    $startupRetryPlan | ConvertTo-Json -Depth 100 |
+        Set-Content -LiteralPath $startupRetryPlanPath
+    $startupRetryRun = Join-Path $testRoot 'startup-retry-run'
+    & (Join-Path $scriptRoot 'New-OrchestrationRun.ps1') `
+        -PlanPath $startupRetryPlanPath -RunDirectory $startupRetryRun `
+        -WorkspaceRoot $skillRoot | Out-Null
+    & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+        -RunDirectory $startupRetryRun -NodeId 'draft' `
+        -Status 'launch_reserved' -Message 'first startup reserved' `
+        -IdempotencyKey 'startup-first-reserved' | Out-Null
+    & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+        -RunDirectory $startupRetryRun -NodeId 'draft' `
+        -Status 'materializing' -Message 'first startup materializing' `
+        -IdempotencyKey 'startup-first-materializing' | Out-Null
+    & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+        -RunDirectory $startupRetryRun -NodeId 'draft' -Status 'failed' `
+        -Message 'health probe confirmed no worker' `
+        -ErrorClass 'startup_unmaterialized' `
+        -IdempotencyKey 'startup-first-failed' | Out-Null
+    & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+        -RunDirectory $startupRetryRun -NodeId 'draft' `
+        -Status 'launch_reserved' -Message 'replacement startup reserved' `
+        -IdempotencyKey 'startup-second-reserved' | Out-Null
+    $startupRetryState = & (
+        Join-Path $scriptRoot 'Get-OrchestrationState.ps1'
+    ) -RunDirectory $startupRetryRun | ConvertFrom-Json
+    Assert-True ($startupRetryState.launch_attempts -eq 2) (
+        'A confirmed unmaterialized startup should permit a replacement attempt.'
+    )
+    Assert-True ($startupRetryState.materialized_workers -eq 0) (
+        'A failed health probe must not count as a materialized Worker.'
+    )
     $fullPacket = & (Join-Path $scriptRoot 'New-WorkerPacket.ps1') `
         -PlanPath $examplePath -NodeId 'review' -WorkspaceRoot $testRoot -Full
     Assert-True ($packet.Length -lt ($fullPacket.Length * 0.75)) (
@@ -473,6 +575,138 @@ try {
     $crowdedFirstWave.nodes[1].wave = 1
     Assert-InvalidPlan $crowdedFirstWave 'crowded-first-wave' (
         'Wave 1 may contain only one worker'
+    )
+
+    $missingRoleActivation = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $missingRoleActivation.nodes[0].Remove('role_activation')
+    Assert-InvalidPlan $missingRoleActivation 'missing-role-activation' (
+        'requires role_activation'
+    )
+
+    $invalidRoleDisposition = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $invalidRoleDisposition.nodes[0].role_activation.user_disposition = 'assumed'
+    Assert-InvalidPlan $invalidRoleDisposition 'invalid-role-disposition' (
+        'must be approved or auto-authorized'
+    )
+
+    $missingAuthorizationEvidence = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $missingAuthorizationEvidence.nodes[0].role_activation.Remove(
+        'authorization_evidence'
+    )
+    Assert-InvalidPlan $missingAuthorizationEvidence (
+        'missing-authorization-evidence'
+    ) 'requires non-empty authorization_evidence'
+
+    $wrongAuthorizationEvidence = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $wrongAuthorizationEvidence.nodes[0].role_activation.user_disposition = (
+        'auto-authorized'
+    )
+    Assert-InvalidPlan $wrongAuthorizationEvidence (
+        'wrong-authorization-evidence'
+    ) 'requires authorization_evidence formatted as policy:path:<file>'
+
+    $missingAuthorizationPolicy = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $missingAuthorizationPolicy.nodes[0].role_activation.user_disposition = (
+        'auto-authorized'
+    )
+    $missingAuthorizationPolicy.nodes[0].role_activation.authorization_evidence = (
+        'policy:path:missing-policy.md'
+    )
+    Assert-InvalidPlan $missingAuthorizationPolicy (
+        'missing-authorization-policy'
+    ) 'authorization policy does not exist'
+
+    $validAuthorizationPolicy = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $validAuthorizationPolicy.nodes[0].role_activation.user_disposition = (
+        'auto-authorized'
+    )
+    $validAuthorizationPolicy.nodes[0].role_activation.authorization_evidence = (
+        'policy:path:SKILL.md'
+    )
+    $validAuthorizationPolicyPath = Join-Path $testRoot (
+        'valid-authorization-policy.json'
+    )
+    $validAuthorizationPolicy | ConvertTo-Json -Depth 100 |
+        Set-Content -LiteralPath $validAuthorizationPolicyPath
+    $validAuthorizationResult = & (
+        Join-Path $scriptRoot 'Test-OrchestrationPlan.ps1'
+    ) -PlanPath $validAuthorizationPolicyPath -WorkspaceRoot $skillRoot |
+        ConvertFrom-Json
+    Assert-True $validAuthorizationResult.valid (
+        'Auto-authorization should accept a real project policy file.'
+    )
+    $missingWorkspaceRootCaught = $false
+    try {
+        & (Join-Path $scriptRoot 'Test-OrchestrationPlan.ps1') `
+            -PlanPath $validAuthorizationPolicyPath | Out-Null
+    }
+    catch {
+        $missingWorkspaceRootCaught = $_.Exception.Message -like (
+            '*requires -WorkspaceRoot to verify its policy*'
+        )
+    }
+    Assert-True $missingWorkspaceRootCaught (
+        'Auto-authorization must not validate without a policy workspace root.'
+    )
+
+    $validManuscript = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $validManuscript.manuscript_profile = @{
+        mode = 'coauthoring'
+        lead_author_node_id = 'integrate'
+        lead_author_owns = @(
+            'argument-spine', 'abstract', 'conclusion', 'final-merge'
+        )
+    }
+    $validManuscript.nodes[0].manuscript_contribution = @{
+        mode = 'co-author'
+        section_scope = 'Architecture methods section'
+    }
+    $validManuscript.nodes[1].manuscript_contribution = @{
+        mode = 'independent-review'
+    }
+    $validManuscriptPath = Join-Path $testRoot 'valid-manuscript.json'
+    $validManuscript | ConvertTo-Json -Depth 100 |
+        Set-Content -LiteralPath $validManuscriptPath
+    $validManuscriptResult = & (
+        Join-Path $scriptRoot 'Test-OrchestrationPlan.ps1'
+    ) -PlanPath $validManuscriptPath -WorkspaceRoot $skillRoot |
+        ConvertFrom-Json
+    Assert-True $validManuscriptResult.valid (
+        'A bounded co-author plus independent reviewer manuscript should pass.'
+    )
+
+    $reviewOnlyCoauthoring = Get-Content -LiteralPath (
+        $validManuscriptPath
+    ) -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+    $reviewOnlyCoauthoring.nodes[0].manuscript_contribution = @{
+        mode = 'research'
+    }
+    Assert-InvalidPlan $reviewOnlyCoauthoring 'review-only-coauthoring' (
+        'requires at least one co-author'
+    )
+
+    $readOnlyCoauthor = Get-Content -LiteralPath $validManuscriptPath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $readOnlyCoauthor.nodes[1].manuscript_contribution = @{
+        mode = 'co-author'
+        section_scope = 'Review-authored methods section'
+    }
+    Assert-InvalidPlan $readOnlyCoauthor 'read-only-manuscript-coauthor' (
+        'must use a proposal-only or scoped-write role'
+    )
+
+    $excessWorkerLimit = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $excessWorkerLimit.limits.max_total_agent_nodes = 5
+    Assert-InvalidPlan $excessWorkerLimit 'excess-worker-limit' (
+        'max_total_agent_nodes must be between 1 and 4'
     )
 
     $overlappingContext = Get-Content -LiteralPath $examplePath -Raw |
@@ -1131,6 +1365,8 @@ try {
         context_efficiency_verified = $true
         token_benchmark_verified = $true
         usage_diagnostics_verified = $true
+        role_activation_verified = $true
+        industry_role_packs_verified = $true
     } | ConvertTo-Json -Depth 5
 }
 finally {

@@ -27,6 +27,14 @@ task. Savings must be demonstrated by fair end-to-end benchmarks.
   an earlier validated result or disjoint context.
 - **Direct-worker fast path:** one temporary read-only worker does not require
   a durable plan, journal, stored role, or miniature lifecycle.
+- **Visible role activation:** every Worker is explained before creation and
+  reported after materialization; choosing a role never forces a Worker.
+- **Four-Worker ceiling:** the controller counts direct and durable Workers
+  together; deterministic scripts enforce four inside each durable run.
+- **On-demand professional roles:** compact supply-chain, software, creative,
+  and equity-research packs expose only the selected contract.
+- **Manuscript co-authorship:** methods and domain specialists can own bounded
+  sections while the main agent preserves the argument spine and final voice.
 - **Explicit role lifetime:** task, project, and user-owned roles cannot be
   silently conflated; user-owned reusable roles are never auto-downgraded.
 - **Risk-based review:** low-risk work skips a reviewer; medium-risk work
@@ -72,15 +80,22 @@ skills/adaptive-agent-orchestrator/
 │   ├── context-efficiency.md
 │   ├── evaluation.md
 │   ├── example-plan.json
+│   ├── role-pack-catalog.json
 │   ├── role-system.md
+│   ├── roles-creative-production.json
+│   ├── roles-equity-research.json
+│   ├── roles-software-development.json
+│   ├── roles-supply-chain.json
 │   ├── routing-policy.md
 │   ├── safety-and-lifecycle.md
 │   └── workflow-contract.md
 └── scripts/
     ├── Add-OrchestrationEvent.ps1
     ├── Get-OrchestrationState.ps1
+    ├── Get-AgentRolePreset.ps1
     ├── New-AgentRole.ps1
     ├── New-OrchestrationRun.ps1
+    ├── New-RoleActivationPreview.ps1
     ├── New-ThreadHandoff.ps1
     ├── New-WorkerPacket.ps1
     ├── Orchestration.Common.ps1
@@ -118,6 +133,12 @@ references instead of copied content, and dispatch progressively.
 Use $adaptive-agent-orchestrator to create a custom demand-forecasting reviewer
 role. Help me define its identity, non-goals, evidence rules, questions, and
 escalation conditions before dispatch.
+```
+
+```text
+Use $adaptive-agent-orchestrator for this supply-chain study. Show the compact
+role map first, explain which responsibilities stay with the main agent, and
+ask before creating any Worker I have not auto-authorized.
 ```
 
 ```text
@@ -172,11 +193,11 @@ state, integrates results, and performs authorized external actions.
 
 ## Validation
 
-The v0.4.1-beta.1 candidate currently passes:
+The v0.4.2-beta.1 candidate currently passes:
 
-- PowerShell parser validation for all 13 scripts;
-- 121 self-test assertions;
-- 28 intentionally invalid negative-test plans correctly rejected;
+- PowerShell parser validation for all 15 scripts;
+- 369 self-test assertions;
+- 36 intentionally invalid negative-test plans correctly rejected;
 - plan, metadata, journal, handoff, dependency, idempotency, ownership,
   context-overlap, progressive-dispatch, short-packet, and completion tests;
 - a synthetic single-case benchmark test.
@@ -195,6 +216,8 @@ pwsh -NoProfile -File `
   use fresh workers and explicit input references.
 - Exact context-overlap checks cannot detect two differently named references
   that contain the same semantics; the main agent must still reject them.
+- Separate durable runs do not share a machine ledger. The controller enforces
+  the root-task Worker ceiling and must reconcile visible state after recovery.
 - Token usage is diagnostic only when the execution surface exposes it.
 - The 20% median savings target is a release benchmark target, not yet a
   production claim. Synthetic tests do not prove real Token savings.

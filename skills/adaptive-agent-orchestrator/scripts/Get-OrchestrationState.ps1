@@ -107,6 +107,9 @@ $state = [ordered]@{
     journal_events = $events.Count
     journal_head = if ($events.Count) { $events[-1].hash } else { $null }
     launch_attempts = @($events | Where-Object { $_.status -eq 'launch_reserved' }).Count
+    materialized_workers = @(
+        $events | Where-Object { $_.status -eq 'materialized' }
+    ).Count
     retry_attempts = $retryUsed
     ready_nodes = $ready
     usage = [ordered]@{

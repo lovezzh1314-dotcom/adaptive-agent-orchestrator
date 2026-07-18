@@ -1,6 +1,6 @@
 # Adaptive Agent Orchestrator
 
-[简体中文](README.zh-CN.md) · [Installation](#installation) · [How it works](#how-it-works) · [Limitations](#current-limitations)
+[简体中文](README.zh-CN.md) · [v0.4.2 release notes](docs/releases/v0.4.2-beta.1.md) · [Installation](#installation) · [How it works](#how-it-works) · [Limitations](#current-limitations)
 
 `adaptive-agent-orchestrator` is a Codex Skill for reducing duplicated context
 and reasoning while coordinating genuinely independent workstreams. It uses a

@@ -5,7 +5,7 @@
 A durable plan is a JSON object with:
 
 - `schema_version`: currently `"1.0"`;
-- `policy_version`: currently `"0.4.1"`, used to validate and replay the run;
+- `policy_version`: currently `"0.4.2"`, used to validate and replay the run;
 - `run_id`: unique, stable identifier;
 - `orchestrator`: the single controller identity and delegation authority;
 - `goal`: concrete outcome;
@@ -91,6 +91,41 @@ Treat the project, role, workstream, and execution thread as different objects:
 
 Every agent node declares:
 
+- `role_activation`: `necessity`, `omission_impact`, `user_disposition`
+  (`approved` or `auto-authorized`), and typed `authorization_evidence`
+  (`user:` or `policy:path:`) recorded after the pre-creation preview;
+
+`authorization_evidence` is an auditable pointer, not a self-authorizing
+credential. The controller verifies it against current user or project policy
+before materialization.
+
+## Optional manuscript profile
+
+Use `manuscript_profile` only when specialist roles are being activated for a
+paper. Omit it for ordinary work and for a simple main-agent draft with no
+specialist Worker.
+
+```json
+{
+  "manuscript_profile": {
+    "mode": "coauthoring",
+    "lead_author_node_id": "integrate",
+    "lead_author_owns": [
+      "argument-spine",
+      "abstract",
+      "conclusion",
+      "final-merge"
+    ]
+  }
+}
+```
+
+Every agent node in this profile declares `manuscript_contribution.mode` as
+`co-author`, `independent-review`, or `research`. A co-author also declares an
+exact `section_scope` and uses a `proposal-only` or `scoped-write` role. An
+independent reviewer is read-only with `purpose: verification`. `coauthoring`
+requires at least one co-author; use `review-only` when specialists truly are
+only an independent quality gate.
 - `session_policy`: `fresh` by default, or explicitly justified `reuse`;
 - `continuity_key`: stable workstream identity;
 - optional `selection_reason`: controller-only diagnostic justification for

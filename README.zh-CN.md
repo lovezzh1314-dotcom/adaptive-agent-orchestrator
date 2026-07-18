@@ -1,6 +1,6 @@
 # Adaptive Agent Orchestrator
 
-[English](README.md) · [安装](#安装) · [工作原理](#工作原理) · [当前限制](#当前限制)
+[English](README.md) · [v0.4.2 更新说明](docs/releases/v0.4.2-beta.1.md) · [安装](#安装) · [工作原理](#工作原理) · [当前限制](#当前限制)
 
 `adaptive-agent-orchestrator` 是一个 Codex Skill：在协调真正独立的工作流
 时，减少重复上下文和重复推理。它提供单 Agent 快速路径、引用优先的 Worker
@@ -25,6 +25,14 @@
   或拥有不重叠的上下文。
 - **直接 Worker 快速路径：** 单个临时只读 Worker 不创建持久计划、日志或
   存储角色，也不创建缩小版状态机。
+- **创建过程可见：** 每个 Worker 创建前都说明角色和必要性，创建后报告
+  真实身份与状态；选择角色本身不会自动创建 Worker。
+- **最多四个 Worker：** 主 Agent 对直接与持久 Worker 合并计数；确定性
+  脚本在单个持久 run 内强制最多四个。
+- **行业角色按需加载：** 供应链、软件开发、美术制作和股票研究角色包只
+  加载被选中的合同，不把整套角色塞入上下文。
+- **论文共同撰写：** 方法与行业专家可拥有明确章节，主 Agent 保持论证
+  主线、统一文风和最终合并，独立审稿人只在质量门介入。
 - **明确角色寿命：** 一次性、项目级和用户拥有角色不会混在一起；用户明确
   要求复用的角色不会被系统自动降级或删除。
 - **按风险审阅：** 低风险跳过 Reviewer；中风险抽查关键输出；高风险才使用
@@ -66,15 +74,22 @@ skills/adaptive-agent-orchestrator/
 │   ├── context-efficiency.md
 │   ├── evaluation.md
 │   ├── example-plan.json
+│   ├── role-pack-catalog.json
 │   ├── role-system.md
+│   ├── roles-creative-production.json
+│   ├── roles-equity-research.json
+│   ├── roles-software-development.json
+│   ├── roles-supply-chain.json
 │   ├── routing-policy.md
 │   ├── safety-and-lifecycle.md
 │   └── workflow-contract.md
 └── scripts/
     ├── Add-OrchestrationEvent.ps1
     ├── Get-OrchestrationState.ps1
+    ├── Get-AgentRolePreset.ps1
     ├── New-AgentRole.ps1
     ├── New-OrchestrationRun.ps1
+    ├── New-RoleActivationPreview.ps1
     ├── New-ThreadHandoff.ps1
     ├── New-WorkerPacket.ps1
     ├── Orchestration.Common.ps1
@@ -110,6 +125,11 @@ $adaptive-agent-orchestrator。共享上下文留在主 Agent，Worker 只拿引
 ```text
 使用 $adaptive-agent-orchestrator 创建一个需求预测 Reviewer 角色。派遣前
 协助我定义身份、非目标、证据规则、提问条件和升级条件。
+```
+
+```text
+使用 $adaptive-agent-orchestrator 完成这个供应链研究。先展示精简角色图，
+说明哪些职责由主 Agent 承担；没有自动组队授权的 Worker 必须先征得我同意。
 ```
 
 ```text
@@ -162,11 +182,11 @@ $adaptive-agent-orchestrator。共享上下文留在主 Agent，Worker 只拿引
 
 ## 验证情况
 
-v0.4.1-beta.1 候选版本目前通过：
+v0.4.2-beta.1 候选版本目前通过：
 
-- 13 个 PowerShell 脚本语法解析；
-- 121 项自测断言；
-- 28 份故意构造的非法负面测试计划均被正确拦截；
+- 15 个 PowerShell 脚本语法解析；
+- 369 项自测断言；
+- 36 份故意构造的非法负面测试计划均被正确拦截；
 - 计划、元数据、日志、handoff、依赖、幂等、所有权、上下文重叠、渐进
   派遣、短任务包和完成门测试；
 - 一个合成的单案例 benchmark 测试。
@@ -182,6 +202,8 @@ pwsh -NoProfile -File `
 - 自然语言排除项无法删除宿主已经注入的历史；应使用 fresh Worker 和明确
   输入引用。
 - 精确重叠检查无法发现“不同名称但语义相同”的材料，主 Agent 仍需拒绝。
+- 不同持久 run 之间没有共享机器账本；根任务总上限由主 Agent 执行，恢复
+  后必须先核对可见状态再继续创建 Worker。
 - 只有执行面提供 telemetry 时，Token 用量才可用于诊断。
 - 中位数节省 20% 是发布 benchmark 目标，不是已经证实的生产声明；合成
   测试不能证明真实 Token 节省。

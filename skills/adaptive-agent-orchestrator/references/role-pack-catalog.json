@@ -1,0 +1,28 @@
+{
+  "packs": [
+    {
+      "id": "supply-chain",
+      "display_name": "Supply Chain",
+      "file": "roles-supply-chain.json",
+      "selection_rule": "Activate only the role whose bounded decision or artifact cannot be handled efficiently by the main agent."
+    },
+    {
+      "id": "software-development",
+      "display_name": "Software Development",
+      "file": "roles-software-development.json",
+      "selection_rule": "Separate ownership only for disjoint requirements, implementation, verification, or release risk."
+    },
+    {
+      "id": "creative-production",
+      "display_name": "Creative Production",
+      "file": "roles-creative-production.json",
+      "selection_rule": "Use at most the roles needed for direction, bounded production, and final brand-quality review."
+    },
+    {
+      "id": "equity-research",
+      "display_name": "Public Equity Research",
+      "file": "roles-equity-research.json",
+      "selection_rule": "Keep facts, valuation, catalysts, and thesis-risk review separate only when each has independent evidence."
+    }
+  ]
+}

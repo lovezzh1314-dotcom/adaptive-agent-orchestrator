@@ -2,7 +2,8 @@
 
 ## Purpose
 
-A role controls behavior, not authority, topology, model, or reasoning effort.
+A role controls behavior, not authority, topology, model, reasoning effort, or
+whether a worker exists.
 The same role can run on different supported models; the same model can serve
 different roles. Only the main orchestrator is a controller.
 
@@ -43,7 +44,53 @@ role ID.
 No role may create workers, expand the graph, approve its own output, execute
 external or irreversible actions, or override the plan.
 
-## Built-in roles
+## Role activation protocol
+
+Role selection and Worker activation are separate decisions. For each
+candidate role, choose exactly one disposition:
+
+- `activate-worker`: independent bounded work justifies a Worker;
+- `main-agent-adopts-role`: the responsibility is useful but context overlap
+  makes delegation wasteful;
+- `defer-until-dependency`: useful only after a named result is accepted;
+- `skip-overlap`: duplicates an active owner;
+- `skip-not-relevant`: does not close an acceptance or risk gap;
+- `user-requested`: explicitly requested and still checked for safe scope.
+
+Before materializing any direct or durable Worker, tell the user:
+
+1. role name and identity;
+2. why it needs a Worker instead of the main agent;
+3. concrete task;
+4. responsibilities and non-goals;
+5. input and context scope;
+6. deliverables and evidence rules;
+7. permissions and exact write scope;
+8. dependencies;
+9. what is lost if the Worker is omitted.
+
+If automatic teaming was not explicitly authorized, wait for the user to
+approve, remove, or redefine it. Durable agent nodes record `necessity`,
+`omission_impact`, `user_disposition`, and `authorization_evidence` under
+`role_activation`. Approved activation cites `user:<message-or-request>`;
+automatic activation cites `policy:path:<project-relative-policy-file>`.
+Render the remaining fields from the node and role contract with
+`New-RoleActivationPreview.ps1`.
+The validator checks only the provenance class. The main agent must verify the
+cited message or policy in current context before launch; a plan string is not
+proof of authority.
+
+After materialization, report actual ID, status, permission scope,
+dependencies, and deviations from the preview. In the no-deviation case,
+compress this to role, ID, status, and `no deviation`; do not restate the full
+preview. Do not describe a failed materialization or unreadable thread as a
+Worker. The controller counts direct, durable, later-wave, and retry Workers
+against a hard maximum of four per root task. The plan validator enforces the
+same ceiling within one durable run; it has no cross-run ledger. On recovery,
+unknown root-task count means no new Worker until the main agent reconciles
+visible threads and run state. Four is a ceiling, never a target.
+
+## Built-in generic roles
 
 Use these as defaults, then specialize with domain context:
 
@@ -55,10 +102,56 @@ Use these as defaults, then specialize with domain context:
 | `adversarial-reviewer` | Seek counterexamples, hidden assumptions, and failure modes | read-only |
 | `recovery-auditor` | Reconcile journal, threads, artifacts, and unknown states | read-only |
 | `integrator` | Compare evidence and prepare adoption decisions for the main agent | proposal-only |
-| `domain-specialist` | Apply a named professional discipline without expanding scope | read-only |
+| `domain-specialist` | Apply a named professional discipline without expanding scope | proposal-only |
 
 The main agent remains the actual integrator and final decision owner even when
 an `integrator` worker prepares a synthesis.
+
+## Industry role packs
+
+Industry packs are small responsibility maps, not automatic teams. Each pack
+contains three or four roles so users can understand the full decision surface
+without creating three or four Workers. Query the catalog, explain the
+candidate roles, and load only a selected contract with
+`Get-AgentRolePreset.ps1`.
+
+Available packs:
+
+- supply chain: demand/inventory, supply/procurement,
+  logistics/fulfillment, S&OP risk integration;
+- software development: requirements/impact, implementation, testing/quality,
+  security/release;
+- creative production: art direction, bounded production, brand/delivery
+  review;
+- public equity research: fundamentals, valuation, catalysts/market, thesis
+  risk.
+
+Do not imitate famous practitioners, run automatic role debates, or inject the
+whole catalog into worker context.
+
+## Manuscript co-author pattern
+
+The main agent is lead author and integrator. It owns the research question,
+argument spine, outline, terminology, transitions, abstract, conclusion, and
+final merge. Specialist roles should own bounded content, not merely review:
+
+- a methods architect co-authors model, experiment, and robustness sections;
+- a domain specialist co-authors operational interpretation, assumptions, and
+  implications;
+- an independent academic reviewer enters only at a quality gate and does not
+  become a co-author.
+
+Local findings return first to the owner of the affected section. Create an
+additional empirical or literature role only when its evidence and artifact
+are genuinely independent; never add roles to make the workflow look complete.
+A co-author role uses `proposal-only` when returning section text or
+`scoped-write` for an exact section path. A read-only reviewer cannot be named
+as the owner of manuscript content.
+When a durable manuscript run activates specialist Workers, declare the
+optional `manuscript_profile` from [workflow-contract.md](workflow-contract.md)
+so `co-author` and `independent-review` cannot be silently conflated. Pure
+review workflows use `review-only`; this profile is never imposed on ordinary
+plans.
 
 ## Creating a custom role
 
@@ -72,8 +165,8 @@ Ask only for missing choices that materially change behavior. Prioritize:
 5. When must it stop and ask the user or controller?
 6. What return structure makes its work easy to verify?
 
-Show the proposed identity and boundaries before first use when they are
-materially ambiguous. Save user-approved reusable roles as JSON or translate
+Show the proposed identity and boundaries before every first materialization.
+Save user-approved reusable roles as JSON or translate
 them into project-scoped Codex custom-agent TOML only when the user wants
 persistent native custom agents.
 

@@ -5,7 +5,7 @@
 A durable plan is a JSON object with:
 
 - `schema_version`: currently `"1.0"`;
-- `policy_version`: currently `"0.3.0"`, used to validate and replay the run;
+- `policy_version`: currently `"0.4.1"`, used to validate and replay the run;
 - `run_id`: unique, stable identifier;
 - `orchestrator`: the single controller identity and delegation authority;
 - `goal`: concrete outcome;
@@ -13,9 +13,16 @@ A durable plan is a JSON object with:
 - `risk`: `low`, `medium`, or `high`;
 - `limits`: bounded concurrency, total nodes, attempts, reserves, depth, and
   Ultra allocation;
+- `efficiency`: reference-first context, progressive dispatch, delta retry,
+  risk-based review, overlap ceiling, and main-only fallback;
 - `roles`: validated behavioral contracts referenced by nodes;
 - `nodes`: work items;
 - `completion`: global success and stopping criteria.
+
+Every agent node declares a positive `wave`. Read
+[context-efficiency.md](context-efficiency.md) before dispatch. A structurally
+valid graph is still rejected when it repeats context, front-loads multiple
+workers, or bypasses progressive dispatch.
 
 Each node contains:
 
@@ -23,6 +30,7 @@ Each node contains:
 {
   "id": "review-architecture",
   "kind": "agent",
+  "wave": 1,
   "topology": "native-subagent",
   "workflow": "parallel",
   "depends_on": [],
@@ -40,10 +48,12 @@ Each node contains:
     "session_policy": "fresh",
     "continuity_key": "architecture-review",
     "max_prior_turns": 0,
-    "inputs": ["Validated proposal", "Acceptance criteria"],
+    "inputs": [
+      "artifact:artifacts/proposal.md",
+      "ref:plan.completion.acceptance"
+    ],
     "excluded": ["Unrelated project conversations"],
-    "handoff_path": "artifacts/handoffs/review.json",
-    "handoff_max_chars": 4000,
+    "handoff_required": false,
     "rotate_on": ["system-error", "scope-change", "version-boundary"]
   }
 }
@@ -83,11 +93,15 @@ Every agent node declares:
 
 - `session_policy`: `fresh` by default, or explicitly justified `reuse`;
 - `continuity_key`: stable workstream identity;
-- `inputs`: context that must be supplied;
+- optional `selection_reason`: controller-only diagnostic justification for
+  borderline discovery or overlap cases; never render it into a worker packet;
+- `inputs`: typed `ref:`, `path:`, `source:`, or `artifact:` references that
+  the worker may open on demand;
 - `excluded`: nearby context that must not be inherited;
-- `handoff_path`: unique compact state artifact;
-- `handoff_max_chars`: 500–8000 characters for the complete serialized
-  handoff, not only its summary;
+- `handoff_required`: whether a later session must resume or reuse this work;
+- when `handoff_required` is true, `handoff_path` is a unique compact state
+  artifact and `handoff_max_chars` is 500–8000 characters for the complete
+  serialized handoff, not only its summary;
 - `rotate_on`: at least `system-error`, `scope-change`, and
   `version-boundary`;
 - `max_prior_turns`: `0` for fresh sessions and `1..6` for reuse.
@@ -102,13 +116,19 @@ is unhealthy or over the turn limit, or it no longer represents the same
 workstream. Never fork a long thread merely to preserve identity; that copies
 the context problem.
 
-Every handoff requires an exact `next_action` and an explicit
+Do not generate a handoff when `handoff_required` is false. Every required
+handoff includes an exact `next_action` and an explicit
 `risk_disposition` of `none`, `open`, or `mitigated`; do not substitute a
-generic default. A fresh context must not carry any reuse-only field.
+generic default. Its evidence list contains only relevant pointers selected
+from the node's machine-recorded evidence. A fresh context must not carry any
+reuse-only field.
 
 ## Dependency and cycle rules
 
 - Every dependency must reference an existing node.
+- A later node becomes ready only after each dependency is explicitly
+  `adopted`, not merely completed or validated. Validation proves a result;
+  adoption records that the controller will use it.
 - Node IDs must be unique.
 - The dependency graph must be acyclic.
 - A loop is represented by one bounded `loop` node with explicit
@@ -116,9 +136,9 @@ generic default. A fresh context must not carry any reuse-only field.
 - A race must define `winner_condition` and `cancel_losers: true`.
 - A human gate must define the default safe action for timeout or absence.
 - An Ultra node sets both `capability` and `effort` to `ultra`, remains
-  read-only, and records `ultra_authorization` as `user-requested` or
-  `escalated-after-failure`. An escalation also names
-  `prior_attempt_node_id`, whose failed state is checked before launch.
+  read-only, and records `ultra_authorization` as `user-requested`. v0.4 never
+  upgrades to Ultra automatically: a failed cheaper attempt is evidence, not
+  authority to spend more.
 
 ## Ownership rules
 
@@ -140,7 +160,7 @@ Global completion must define:
   optional minimum size or item count;
 - structured evidence checks naming a node and minimum evidence entries;
 - unresolved-risk threshold;
-- termination conditions for budget, repeated failure, unavailable tools, and
+- termination conditions for exhausted execution slots, repeated failure, unavailable tools, and
   rejected approvals.
 
 Finishing all nodes is not success if acceptance checks fail.

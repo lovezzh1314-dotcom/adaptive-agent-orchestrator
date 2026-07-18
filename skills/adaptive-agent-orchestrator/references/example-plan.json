@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "policy_version": "0.3.0",
+  "policy_version": "0.4.1",
   "run_id": "example-review-001",
   "goal": "Draft and independently verify a bounded architecture proposal.",
   "mode": "workflow",
@@ -70,9 +70,9 @@
     }
   ],
   "limits": {
-    "max_concurrent_nodes": 3,
-    "max_total_agent_nodes": 6,
-    "max_new_nodes_per_wave": 3,
+    "max_concurrent_nodes": 2,
+    "max_total_agent_nodes": 4,
+    "max_new_nodes_per_wave": 2,
     "max_attempts_per_node": 2,
     "retry_reserve": 1,
     "verification_reserve": 1,
@@ -82,10 +82,20 @@
     "max_dynamic_nodes": 1,
     "max_forks": 0
   },
+  "efficiency": {
+    "profile": "lean",
+    "context_strategy": "reference-first",
+    "dispatch_strategy": "progressive",
+    "retry_strategy": "delta",
+    "review_strategy": "risk-only",
+    "max_context_overlap_ratio": 0.5,
+    "fallback": "main-only"
+  },
   "nodes": [
     {
       "id": "draft",
       "kind": "agent",
+      "wave": 1,
       "topology": "background-thread",
       "workflow": "direct",
       "depends_on": [],
@@ -103,16 +113,20 @@
         "session_policy": "fresh",
         "continuity_key": "architecture-proposal",
         "max_prior_turns": 0,
-        "inputs": ["Plan goal", "Constraints", "Acceptance criteria"],
+        "inputs": [
+          "ref:plan.goal",
+          "ref:plan.constraints",
+          "ref:plan.completion.acceptance"
+        ],
         "excluded": ["Unrelated project conversations", "Prior reviewer reasoning"],
-        "handoff_path": "artifacts/handoffs/draft.json",
-        "handoff_max_chars": 4000,
+        "handoff_required": false,
         "rotate_on": ["system-error", "scope-change", "version-boundary"]
       }
     },
     {
       "id": "review",
       "kind": "agent",
+      "wave": 2,
       "topology": "native-subagent",
       "workflow": "pipeline",
       "depends_on": ["draft"],
@@ -130,10 +144,12 @@
         "session_policy": "fresh",
         "continuity_key": "architecture-review",
         "max_prior_turns": 0,
-        "inputs": ["Validated architecture draft", "Acceptance criteria"],
+        "inputs": [
+          "artifact:artifacts/draft/output.md",
+          "ref:plan.completion.acceptance"
+        ],
         "excluded": ["Implementer's hidden reasoning", "Unrelated project conversations"],
-        "handoff_path": "artifacts/handoffs/review.json",
-        "handoff_max_chars": 4000,
+        "handoff_required": false,
         "rotate_on": ["system-error", "scope-change", "version-boundary"]
       }
     },
@@ -151,7 +167,7 @@
       "write_scope": ["artifacts/final"],
       "acceptance": ["Every review finding has a disposition."],
       "max_attempts": 1,
-      "allow_delegation": false
+      "allow_delegation": false,
     }
   ],
   "gates": [],
@@ -174,6 +190,9 @@
         "minimum_entries": 1
       }
     ],
-    "stop_conditions": ["Budget exhausted", "Required tool unavailable"]
+    "stop_conditions": [
+      "A completed wave adds no accepted evidence, coverage, or material risk reduction",
+      "Required tool unavailable"
+    ]
   }
 }

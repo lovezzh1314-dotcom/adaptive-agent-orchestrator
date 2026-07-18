@@ -96,8 +96,8 @@ $plan = Get-Content -LiteralPath $resolvedPlan -Raw | ConvertFrom-Json -Depth 10
 if ((Get-PlanProperty $plan 'schema_version') -ne '1.0') {
     Add-PlanError "schema_version must be '1.0'."
 }
-if ((Get-PlanProperty $plan 'policy_version') -ne '0.3.0') {
-    Add-PlanError "policy_version must be '0.3.0'."
+if ((Get-PlanProperty $plan 'policy_version') -ne '0.4.1') {
+    Add-PlanError "policy_version must be '0.4.1'."
 }
 $null = Require-Text $plan 'run_id' 'Plan'
 $null = Require-Text $plan 'goal' 'Plan'
@@ -204,6 +204,15 @@ foreach ($role in $roleItems) {
     if ((Get-PlanProperty $role 'user_defined') -isnot [bool]) {
         Add-PlanError "Role '$roleId' requires boolean user_defined."
     }
+    $lifetime = Get-PlanProperty $role 'lifetime'
+    if ($null -ne $lifetime -and
+        $lifetime -notin @('task', 'project', 'user-owned')) {
+        Add-PlanError "Role '$roleId' lifetime must be task, project, or user-owned."
+    }
+    if ($lifetime -eq 'user-owned' -and
+        (Get-PlanProperty $role 'user_defined') -ne $true) {
+        Add-PlanError "Role '$roleId' user-owned lifetime requires user_defined true."
+    }
 }
 
 $ids = @{}
@@ -306,20 +315,34 @@ foreach ($node in $nodes) {
                     Add-PlanError "Agent node '$id' context.$field requires non-empty entries."
                 }
             }
-            $handoffPath = Require-Text $context 'handoff_path' "Agent node '$id' context"
-            $normalizedHandoff = Get-NormalizedScope $handoffPath "$id-handoff"
-            if ($null -ne $normalizedHandoff) {
-                if ($normalizedHandoffPaths.ContainsKey($normalizedHandoff)) {
-                    Add-PlanError "Duplicate handoff_path between '$id' and '$($normalizedHandoffPaths[$normalizedHandoff])'."
-                } else {
-                    $normalizedHandoffPaths[$normalizedHandoff] = $id
-                }
+            if ((Test-PlanProperty $context 'selection_reason') -and
+                [string]::IsNullOrWhiteSpace(
+                    [string](Get-PlanProperty $context 'selection_reason')
+                )) {
+                Add-PlanError "Agent node '$id' context.selection_reason cannot be empty."
             }
-            $handoffMaxChars = Get-PlanProperty $context 'handoff_max_chars'
-            if ($null -eq $handoffMaxChars -or
-                ($handoffMaxChars -isnot [long] -and $handoffMaxChars -isnot [int]) -or
-                [int]$handoffMaxChars -lt 500 -or [int]$handoffMaxChars -gt 8000) {
-                Add-PlanError "Agent node '$id' context.handoff_max_chars must be 500..8000."
+            $handoffRequired = Get-PlanProperty $context 'handoff_required'
+            if ($handoffRequired -isnot [bool]) {
+                Add-PlanError "Agent node '$id' context.handoff_required must be boolean."
+            } elseif ($handoffRequired) {
+                $handoffPath = Require-Text $context 'handoff_path' "Agent node '$id' context"
+                $normalizedHandoff = Get-NormalizedScope $handoffPath "$id-handoff"
+                if ($null -ne $normalizedHandoff) {
+                    if ($normalizedHandoffPaths.ContainsKey($normalizedHandoff)) {
+                        Add-PlanError "Duplicate handoff_path between '$id' and '$($normalizedHandoffPaths[$normalizedHandoff])'."
+                    } else {
+                        $normalizedHandoffPaths[$normalizedHandoff] = $id
+                    }
+                }
+                $handoffMaxChars = Get-PlanProperty $context 'handoff_max_chars'
+                if ($null -eq $handoffMaxChars -or
+                    ($handoffMaxChars -isnot [long] -and $handoffMaxChars -isnot [int]) -or
+                    [int]$handoffMaxChars -lt 500 -or [int]$handoffMaxChars -gt 8000) {
+                    Add-PlanError "Agent node '$id' context.handoff_max_chars must be 500..8000."
+                }
+            } elseif ((Test-PlanProperty $context 'handoff_path') -or
+                (Test-PlanProperty $context 'handoff_max_chars')) {
+                Add-PlanError "Agent node '$id' without handoff_required cannot set handoff_path or handoff_max_chars."
             }
             $rotateOn = @(Get-PlanProperty $context 'rotate_on')
             foreach ($requiredRotation in @(
@@ -380,14 +403,8 @@ foreach ($node in $nodes) {
                 Add-PlanError "Ultra node '$id' requires ultra_reason."
             }
             $authorization = Get-PlanProperty $node 'ultra_authorization'
-            if ($authorization -notin @('user-requested', 'escalated-after-failure')) {
-                Add-PlanError "Ultra node '$id' requires valid ultra_authorization."
-            }
-            if ($authorization -eq 'escalated-after-failure' -and
-                [string]::IsNullOrWhiteSpace(
-                    [string](Get-PlanProperty $node 'prior_attempt_node_id')
-                )) {
-                Add-PlanError "Escalated Ultra node '$id' requires prior_attempt_node_id."
+            if ($authorization -ne 'user-requested') {
+                Add-PlanError "Ultra node '$id' requires user-requested ultra_authorization."
             }
         }
         if ($workflow -eq 'loop') {
@@ -565,6 +582,16 @@ foreach ($check in @(Get-PlanProperty $completion 'evidence_checks')) {
 foreach ($requiredNode in @(Get-PlanProperty $completion 'required_nodes')) {
     if (-not $ids.ContainsKey([string]$requiredNode)) {
         Add-PlanError "completion.required_nodes references missing node '$requiredNode'."
+    }
+}
+
+if ($script:Errors.Count -eq 0) {
+    $efficiencyScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) `
+        'Test-OrchestrationEfficiency.ps1'
+    try {
+        $null = & $efficiencyScript -PlanPath $resolvedPlan
+    } catch {
+        Add-PlanError $_.Exception.Message
     }
 }
 

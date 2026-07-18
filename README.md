@@ -126,6 +126,39 @@ from its plan and event journal without reusing failed execution context.
 The Skill decides whether coordination is worth its cost. Small, sequential
 tasks should remain in the main agent.
 
+## Compared with official Codex subagents
+
+[Codex subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+are the execution primitive: Codex can spawn specialized agents in parallel,
+configure custom agents, collect their results, and expose their threads in
+supported clients. They are excellent for a direct request such as “run one
+reviewer for security and another for test gaps.”
+
+Adaptive Agent Orchestrator is a governance layer above that primitive. It does
+not claim to replace the official feature.
+
+| Capability | Official subagents | Adaptive Agent Orchestrator |
+| --- | --- | --- |
+| Fast one-off delegation | Built in and simpler | Intentionally stays out of the way |
+| Parallel agent execution | Built in | Can use it as one execution topology |
+| Custom agent instructions | Supported through agent files | Adds guided role definition with non-goals, evidence, questions, and escalation contracts |
+| Dependency graph | Prompt-driven orchestration | Validated DAG with explicit dependency gates |
+| Write ownership | Requires careful prompting and sandbox choices | Rejects overlapping writer scopes before execution |
+| Retry context | Managed by the current session | Declares fresh/reuse policy and forces rotation after failure, scope, or version boundaries |
+| Durable recovery | Thread history and returned summaries | Immutable plan hash, append-only event journal, replayable state, and compact handoffs |
+| Handoff integrity | Summary-oriented | Size-limited immutable handoff with SHA-256 binding |
+| Completion | Main agent consolidates results | Deterministic node, artifact, evidence, and human-decision gates |
+| Audit trail | Inspectable agent threads | Structured lifecycle events, dispositions, evidence pointers, and tamper checks |
+
+Use official subagents directly when the task is short, read-heavy, and easy to
+verify. Use this Skill when a mistake would be caused by coordination itself:
+multiple writers, several stages, persistent roles, retries, recovery,
+independent quality gates, or a need to explain exactly why the run is
+complete.
+
+The practical advantage is not “more agents.” It is **less ambiguity per
+agent, explicit ownership, and a recoverable proof of what happened**.
+
 ## How it works
 
 ```text

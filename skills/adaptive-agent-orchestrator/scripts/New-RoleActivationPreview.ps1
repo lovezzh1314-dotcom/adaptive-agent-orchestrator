@@ -48,6 +48,18 @@ $modelAuthorizationEvidence = if (
 } else {
     'not-required'
 }
+$executionForm = if ($node.topology -eq 'native-subagent') {
+    'native subagent'
+} else {
+    'independent background agent'
+}
+$executionFormReason = if ($node.topology -eq 'native-subagent') {
+    'temporary, bounded, independently checkable work that should release its slot when complete'
+} elseif ($node.context.session_policy -eq 'reuse') {
+    'the same bounded long-running workstream needs independent history and continues from a verified handoff'
+} else {
+    'independent history, recovery, or reuse across turns is required'
+}
 
 $preview = @"
 ## Proposed Worker
@@ -61,6 +73,8 @@ $preview = @"
 - Non-goals: $nonGoals
 - Inputs and context scope: $inputs
 - Excluded context: $excluded
+- Execution form: $executionForm
+- Why this execution form: $executionFormReason
 - Topology/session: $($node.topology) / $($node.context.session_policy)
 - Planned model/effort: $($node.model) / $($node.effort)
 - Model reason: $($node.model_reason)

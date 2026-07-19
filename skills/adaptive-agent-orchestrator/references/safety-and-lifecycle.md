@@ -12,13 +12,45 @@
 
 For a durable background thread:
 
-1. Create one real worker using the correct project.
-2. Read the returned thread immediately.
-3. Require a real thread, working directory, and turn state.
-4. Stop the batch if the thread cannot be read or is not materialized.
+1. Define one stable activation key and reserve it atomically with
+   `New-ThreadActivationReservation.ps1`. The reservation must bind the saved
+   role-activation preview and its hash; preparing the artifact does not replace
+   showing the explanation to the user.
+2. Capture the recent task list and make exactly one creation call for that
+   reserved activation key.
+3. Reconcile the task list regardless of whether the call reports success or
+   error; use source task, creation window, and task summary.
+4. If one match exists, adopt it. If multiple matches exist, stop with
+   `duplicates_pending`, archive the extras, and record their disposition
+   before continuing.
+5. Require two captured task-list snapshots, at least five seconds apart, and
+   a final snapshot at the visibility-window end before declaring no match.
+6. Write the immutable reconciliation receipt with
+   `Resolve-ThreadReconciliation.ps1`.
+7. Retry only when the receipt confirms no match and its raw input, activation
+   reservation, and receipt hashes all verify. A typed observation string alone
+   is insufficient.
+8. If reconciliation is unavailable or ambiguous, stop with `unknown`; never
+   retry the same activation key.
+
+A confirmed no-match replacement uses a distinct attempt activation key; an
+existing reservation always blocks a second creation call for the same key.
 
 Do not retry by switching to projectless. Do not edit Codex SQLite state. A
-client-side ID without a readable thread is not a worker.
+client-side error is not proof that no worker exists.
+
+## Result collection gate
+
+Independent background threads keep their final answers in their own task.
+After materialization, register the real thread ID. Use `read_thread` as the
+primary collection path and write a hash-bound result receipt with
+`New-ThreadResultReceipt.ps1` before parent-task integration. `wait_threads`
+may reduce polling for independent background threads, but it is optional. If
+the runtime reports that its handler is unavailable, fall back once to bounded
+thread reads; do not retry the same unavailable handler. Native subagents use
+`list_agents` and `wait_agent` and never depend on `wait_threads`. Do not assume
+that a sent follow-up will push the result back to the parent, and do not
+interpret silence as completion.
 
 ## Session rotation
 

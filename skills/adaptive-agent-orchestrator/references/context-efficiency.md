@@ -90,7 +90,14 @@ failures return to the main agent instead of triggering blind retries.
 `New-WorkerPacket.ps1` requires `RetryRunDirectory` in delta mode and verifies
 that the same plan and node are recorded there in a hash-checked `failed`
 state. An initial attempt or an unrelated run cannot self-declare itself a
-delta retry.
+delta retry. Deterministic failures also bind a stable action key, failure
+code, and a premise fingerprint derived from a canonical run-local manifest.
+Do not accept a caller-supplied fingerprint. Field order, input-reference
+order, and leading or trailing whitespace must not manufacture a changed
+premise. After any deterministic failure, a new Worker launch requires the user
+to authorize the exact prior failure event. A changed manifest remains useful
+audit context but cannot authorize itself. Transient runtime failures remain
+governed by bounded attempts.
 
 ## Review policy
 

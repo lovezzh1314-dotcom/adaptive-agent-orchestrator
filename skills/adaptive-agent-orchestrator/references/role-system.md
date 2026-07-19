@@ -61,13 +61,15 @@ Before materializing any direct or durable Worker, tell the user:
 
 1. role name and identity;
 2. why it needs a Worker instead of the main agent;
-3. concrete task;
-4. responsibilities and non-goals;
-5. input and context scope;
-6. deliverables and evidence rules;
-7. permissions and exact write scope;
-8. dependencies;
-9. what is lost if the Worker is omitted.
+3. execution form (`native subagent` or `independent background agent`) and
+   why that form fits the task lifecycle;
+4. concrete task;
+5. responsibilities and non-goals;
+6. input and context scope;
+7. deliverables and evidence rules;
+8. permissions and exact write scope;
+9. dependencies;
+10. what is lost if the Worker is omitted.
 
 If automatic teaming was not explicitly authorized, wait for the user to
 approve, remove, or redefine it. Durable agent nodes record `necessity`,
@@ -80,17 +82,33 @@ The validator checks only the provenance class. The main agent must verify the
 cited message or policy in current context before launch; a plan string is not
 proof of authority.
 
-After materialization, report actual ID, model, status, permission scope,
-dependencies, and deviations from the preview. In the no-deviation case,
-compress this to role, ID, model, status, and `no deviation`; do not restate
-the full preview. Do not describe a failed materialization or unreadable thread
-as a Worker. Target six active Workers when the runtime supports it: no more
-than four active persistent Workers and two protected transient-subagent
-slots. Registered but idle roles or threads do not count. A separate
+For durable background work, save the rendered preview inside the run and bind
+its path and hash in the activation reservation before calling the creation
+tool. This audit artifact does not replace the user-facing commentary. A direct
+native subagent does not need a durable run, but its explanation must still be
+shown before `spawn_agent`.
+
+After materialization, report actual execution form, ID, model, status,
+permission scope, dependencies, and deviations from the preview. In the
+no-deviation case, compress this to role, execution form, ID, model, status,
+and `no deviation`; do not restate the full preview. Do not describe a failed
+materialization or unreadable thread as a Worker after task-list reconciliation
+confirms that nothing materialized. A failed health probe alone is not proof of
+absence. Target six active Workers when the runtime supports it: no more than
+four active persistent Workers and two protected transient-subagent slots.
+Registered but idle roles or threads do not count. A separate
 cumulative materialization ceiling covers direct, durable, later-wave, and
 retry Workers. The plan validator and journal enforce one durable run; before
 cross-run or direct launches, reconcile visible active Workers with
 `Resolve-WorkerCapacity.ps1`.
+
+Treat a creation-call error as an ambiguous receipt, not as proof of absence.
+Before any retry, query recent tasks and reconcile by source task, creation
+window, and task summary. If one matching task exists, adopt it and report the
+actual ID. If multiple matches exist, stop and archive the duplicates. Allow
+only one creation call per stable activation key. Retry only after
+reconciliation confirms that no matching task materialized; otherwise stop
+with an unknown state.
 
 ## Built-in generic roles
 

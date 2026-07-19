@@ -1,6 +1,6 @@
 # Adaptive Agent Orchestrator
 
-[English](README.md) · [v0.5.0 更新说明](docs/releases/v0.5.0.md) · [版本历史](docs/releases/README.md) · [安装](#安装) · [工作原理](#工作原理) · [当前限制](#当前限制)
+[English](README.md) · [v0.5.1 更新说明](docs/releases/v0.5.1.md) · [版本历史](docs/releases/README.md) · [安装](#安装) · [工作原理](#工作原理) · [当前限制](#当前限制)
 
 `adaptive-agent-orchestrator` 是一个 Codex Skill：在协调真正独立的工作流
 时，减少重复上下文和重复推理。它提供单 Agent 快速路径、引用优先的 Worker
@@ -27,6 +27,10 @@
   存储角色，也不创建缩小版状态机。
 - **创建过程可见：** 每个 Worker 创建前都说明角色和必要性，创建后报告
   真实身份与状态；选择角色本身不会自动创建 Worker。
+- **创建结果核对：** 后台创建调用无论返回成功还是错误，都要用任务列表
+  核对真实实体；未知状态不会触发盲目重试，重复实体会被识别并停止扩张。
+- **结果回收门：** 独立后台 Agent 的最终回答必须被显式读取并生成哈希回执，
+  否则必需节点不能通过完成门。
 - **受保护的活动容量：** 目标最多六个活动 Worker，其中四个可供常驻
   Worker 使用，另外两个保留给临时 subagent；实际数量服从运行时容量。
 - **自动模型路由：** Luna 处理边界明确的机械任务，Sol 负责判断、写作、
@@ -44,7 +48,8 @@
 - **按风险审阅：** 低风险跳过 Reviewer；中风险抽查关键输出；高风险才使用
   一个独立 Reviewer。
 - **差量重试：** 只传原产物指针、失败证据和修复指令，不重放整个任务包；
-  只有同一哈希计划中已记录为失败的同一节点才能进入差量模式。
+  只有同一哈希计划中已记录为失败的同一节点才能进入差量模式；确定性失败
+  后再次创建 Worker 必须绑定该失败事件并由用户确认。
 - **单一总控：** Worker 不能递归创建 Worker。
 - **可恢复执行：** 不可变计划、哈希链事件、仅在恢复/复用需要时生成的
   handoff、写入范围检查和可执行完成门。
@@ -96,9 +101,15 @@ skills/adaptive-agent-orchestrator/
     ├── New-AgentRole.ps1
     ├── New-OrchestrationRun.ps1
     ├── New-RoleActivationPreview.ps1
+    ├── New-ThreadActivationReservation.ps1
     ├── New-ThreadHandoff.ps1
+    ├── New-ThreadResultReceipt.ps1
     ├── New-WorkerPacket.ps1
     ├── Orchestration.Common.ps1
+    ├── Resolve-OrchestrationPreset.ps1
+    ├── Resolve-ThreadReconciliation.ps1
+    ├── Resolve-WorkerCapacity.ps1
+    ├── Resolve-WorkerModel.ps1
     ├── Test-OrchestrationBenchmark.ps1
     ├── Test-OrchestrationBenchmarkSuite.ps1
     ├── Test-OrchestrationCompletion.ps1
@@ -188,10 +199,10 @@ $adaptive-agent-orchestrator。共享上下文留在主 Agent，Worker 只拿引
 
 ## 验证情况
 
-v0.5.0 正式版本通过：
+v0.5.1 正式版本通过：
 
-- 18 个 PowerShell 脚本语法解析；
-- 438 项自测断言；
+- 21 个 PowerShell 脚本语法解析；
+- 464 项自测断言；
 - 47 份故意构造的非法负面测试计划均被正确拦截；
 - 计划、元数据、日志、handoff、依赖、幂等、所有权、上下文重叠、渐进
   派遣、短任务包和完成门测试；

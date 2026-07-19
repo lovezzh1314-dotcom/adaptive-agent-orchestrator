@@ -160,8 +160,9 @@ single durable journal can enforce only its own run.
 
 `max_total_agent_nodes` is a separate cumulative materialization ceiling,
 including direct, durable, later-wave, and retry Workers. The deterministic
-journal enforces it within one run; separate runs do not share a ledger. A
-materialization that fails its immediate health probe is not counted.
+journal enforces it within one run; separate runs do not share a ledger. An
+ambiguous or failed creation receipt remains pending until task-list
+reconciliation proves whether a Worker materialized.
 
 ## Escalation ladder
 

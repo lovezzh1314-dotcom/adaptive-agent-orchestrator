@@ -7,6 +7,7 @@ release records.
 
 | Version | Channel | Focus | Details |
 | --- | --- | --- | --- |
+| `v0.5.1` | Stable | Thread reconciliation, result receipts, deterministic retry guard | [Notes](v0.5.1.md) |
 | `v0.5.0` | Stable | Deterministic modes, model routing, protected 4+2 active capacity, reusable research evidence | [Notes](v0.5.0.md) |
 | `v0.4.2-beta.1` | Prerelease | Visible role activation, compact industry role packs, manuscript co-authorship | [Notes](v0.4.2-beta.1.md) |
 | `v0.4.1-beta.1` | Prerelease | Context selection, opt-in handoffs, progressive dispatch | [Changelog](../../CHANGELOG.md#041-beta1---2026-07-18) |

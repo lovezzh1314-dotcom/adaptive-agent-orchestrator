@@ -6,6 +6,7 @@ $ErrorActionPreference = 'Stop'
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $skillRoot = Split-Path -Parent $scriptRoot
+. (Join-Path $scriptRoot 'Orchestration.Common.ps1')
 $examplePath = Join-Path $skillRoot 'references\example-plan.json'
 $script:assertionCount = 0
 $script:invalidPlanCount = 0
@@ -74,7 +75,8 @@ try {
     foreach ($requiredPreviewLabel in @(
         'Role:', 'Mission:', 'Identity:', 'Why a Worker is needed:', 'Concrete task:',
         'Responsibilities:', 'Non-goals:', 'Inputs and context scope:',
-        'Excluded context:', 'Topology/session:',
+        'Excluded context:', 'Execution form:', 'Why this execution form:',
+        'Topology/session:',
         'Planned model/effort:', 'Model reason:', 'Model authorization:',
         'Model authorization evidence:',
         'Deliverables:', 'Evidence rules:', 'Permissions and write scope:',
@@ -91,12 +93,218 @@ try {
     Assert-True ($activationPreview -like '*background-thread / fresh*') (
         'Role activation preview should expose topology and session policy.'
     )
+    Assert-True ($activationPreview -like '*independent background agent*') (
+        'Role activation preview should name the user-facing execution form.'
+    )
+    Assert-True (
+        $activationPreview -like '*independent history, recovery, or reuse across turns is required*'
+    ) 'Role activation preview should explain why the execution form was selected.'
     Assert-True ($activationPreview -like '*Prior reviewer reasoning*') (
         'Role activation preview should expose excluded context.'
     )
     Assert-True ($activationPreview -match 'Architecture Owner \[architecture-owner\]') (
         'Role activation preview should render the selected role ID exactly.'
     )
+
+    $reconcileSummary = 'Review the candidate release.'
+    $reconcileRun = Join-Path $testRoot 'thread-reconcile-run'
+    $null = New-Item -ItemType Directory -Path $reconcileRun
+    $reconcilePreviewPath = Join-Path $reconcileRun 'role-preview.md'
+    & (Join-Path $scriptRoot 'New-RoleActivationPreview.ps1') `
+        -PlanPath $examplePath -NodeId 'review' `
+        -OutputPath $reconcilePreviewPath | Out-Null
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'New-ThreadActivationReservation.ps1') `
+            -RunDirectory $reconcileRun `
+            -ActivationKey 'missing-preview' `
+            -SourceThreadId 'source-thread-1' `
+            -TaskSummary $reconcileSummary `
+            -RolePreviewPath (Join-Path $reconcileRun 'missing-preview.md') |
+            Out-Null
+    } 'Role preview must be an existing file' (
+        'A durable Worker cannot be reserved before its role preview exists.'
+    )
+    $reconcileReservation = & (
+        Join-Path $scriptRoot 'New-ThreadActivationReservation.ps1'
+    ) -RunDirectory $reconcileRun -ActivationKey 'review-release-v051' `
+        -SourceThreadId 'source-thread-1' -TaskSummary $reconcileSummary `
+        -RolePreviewPath $reconcilePreviewPath |
+        ConvertFrom-Json -Depth 20
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'New-ThreadActivationReservation.ps1') `
+            -RunDirectory $reconcileRun `
+            -ActivationKey 'review-release-v051' `
+            -SourceThreadId 'source-thread-1' `
+            -TaskSummary $reconcileSummary `
+            -RolePreviewPath $reconcilePreviewPath | Out-Null
+    } 'already reserved' (
+        'One activation key must permit only one atomic creation reservation.'
+    )
+    $reconcileInputPath = Join-Path $reconcileRun 'thread-reconcile.json'
+    [ordered]@{
+        activation_key = 'review-release-v051'
+        source_thread_id = 'source-thread-1'
+        task_summary = $reconcileSummary
+        window_start_utc = '2026-07-20T00:00:00Z'
+        window_end_utc = '2026-07-20T00:02:00Z'
+        reservation_path = $reconcileReservation.reservation_path
+        create_call = [ordered]@{
+            status = 'error'
+            returned_thread_id = $null
+        }
+        snapshots = @(
+            [ordered]@{
+                captured_at = '2026-07-20T00:00:10Z'
+                threads = @()
+            },
+            [ordered]@{
+                captured_at = '2026-07-20T00:00:20Z'
+                threads = @(
+                    [ordered]@{
+                        thread_id = 'review-thread-1'
+                        host_id = 'opaque-host-1'
+                        created_at = '2026-07-20T00:00:15Z'
+                        preview = (
+                            '<activation_key>review-release-v051</activation_key> ' +
+                            '<source_thread_id>source-thread-1</source_thread_id> ' +
+                            $reconcileSummary
+                        )
+                    }
+                )
+            }
+        )
+    } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $reconcileInputPath
+    $reconciled = & (
+        Join-Path $scriptRoot 'Resolve-ThreadReconciliation.ps1'
+    ) -InputPath $reconcileInputPath -OutputPath (
+        Join-Path $reconcileRun 'receipts\adopted.thread-reconciliation.json'
+    ) | ConvertFrom-Json -Depth 20
+    Assert-True (
+        $reconciled.decision -eq 'adopted' -and
+        $reconciled.adopted_thread_id -eq 'review-thread-1' -and
+        $reconciled.adopted_host_id -eq 'opaque-host-1'
+    ) 'A later visible unique thread must be adopted after a create-call error.'
+    Assert-True ($reconciled.receipt_hash -match '^[0-9a-f]{64}$') (
+        'Thread reconciliation must return a hash-bound receipt.'
+    )
+
+    $wrongActivation = Get-Content -LiteralPath $reconcileInputPath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    $wrongActivation.snapshots[1].threads[0].preview = (
+        '<activation_key>another-activation</activation_key> ' +
+        '<source_thread_id>source-thread-1</source_thread_id> ' +
+        $reconcileSummary
+    )
+    $wrongActivationPath = Join-Path $reconcileRun (
+        'thread-reconcile-wrong-activation.json'
+    )
+    $wrongActivation | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $wrongActivationPath
+    $wrongActivationResult = & (
+        Join-Path $scriptRoot 'Resolve-ThreadReconciliation.ps1'
+    ) -InputPath $wrongActivationPath -OutputPath (
+        Join-Path $reconcileRun 'receipts\wrong.thread-reconciliation.json'
+    ) | ConvertFrom-Json -Depth 20
+    Assert-True ($wrongActivationResult.decision -eq 'unknown') (
+        'A different activation key must not match or prove absence before the window ends.'
+    )
+
+    $singleEmpty = Get-Content -LiteralPath $reconcileInputPath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    $singleEmpty.snapshots = @($singleEmpty.snapshots[0])
+    $singleEmptyPath = Join-Path $reconcileRun 'thread-reconcile-single-empty.json'
+    $singleEmpty | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $singleEmptyPath
+    $singleEmptyResult = & (
+        Join-Path $scriptRoot 'Resolve-ThreadReconciliation.ps1'
+    ) -InputPath $singleEmptyPath -OutputPath (
+        Join-Path $reconcileRun 'receipts\single.thread-reconciliation.json'
+    ) | ConvertFrom-Json -Depth 20
+    Assert-True ($singleEmptyResult.decision -eq 'unknown') (
+        'One empty snapshot must not prove that no task materialized.'
+    )
+
+    $doubleEmpty = Get-Content -LiteralPath $reconcileInputPath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    $doubleEmpty.snapshots[1].threads = @()
+    $doubleEmptyPath = Join-Path $reconcileRun 'thread-reconcile-double-empty.json'
+    $doubleEmpty | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $doubleEmptyPath
+    $doubleEmptyResult = & (
+        Join-Path $scriptRoot 'Resolve-ThreadReconciliation.ps1'
+    ) -InputPath $doubleEmptyPath -OutputPath (
+        Join-Path $reconcileRun 'receipts\empty.thread-reconciliation.json'
+    ) | ConvertFrom-Json -Depth 20
+    Assert-True ($doubleEmptyResult.decision -eq 'unknown') (
+        'Two empty snapshots before the visibility-window end remain unknown.'
+    )
+    $endedEmpty = Get-Content -LiteralPath $doubleEmptyPath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    $endedEmpty.snapshots[1].captured_at = '2026-07-20T00:02:00Z'
+    $endedEmptyPath = Join-Path $reconcileRun (
+        'thread-reconcile-window-ended-empty.json'
+    )
+    $endedEmpty | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $endedEmptyPath
+    $endedEmptyResult = & (
+        Join-Path $scriptRoot 'Resolve-ThreadReconciliation.ps1'
+    ) -InputPath $endedEmptyPath -OutputPath (
+        Join-Path $reconcileRun 'receipts\window-ended.thread-reconciliation.json'
+    ) | ConvertFrom-Json -Depth 20
+    Assert-True ($endedEmptyResult.decision -eq 'no_match') (
+        'Only repeated empty snapshots through the visibility-window end prove no match.'
+    )
+    $tooFastEmpty = Get-Content -LiteralPath $doubleEmptyPath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    $tooFastEmpty.snapshots[1].captured_at = '2026-07-20T00:00:10.001Z'
+    $tooFastEmptyPath = Join-Path $reconcileRun (
+        'thread-reconcile-too-fast-empty.json'
+    )
+    $tooFastEmpty | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $tooFastEmptyPath
+    $tooFastEmptyResult = & (
+        Join-Path $scriptRoot 'Resolve-ThreadReconciliation.ps1'
+    ) -InputPath $tooFastEmptyPath -OutputPath (
+        Join-Path $reconcileRun 'receipts\too-fast.thread-reconciliation.json'
+    ) | ConvertFrom-Json -Depth 20
+    Assert-True ($tooFastEmptyResult.decision -eq 'unknown') (
+        'Nearly simultaneous empty snapshots must not prove non-materialization.'
+    )
+
+    $multiple = Get-Content -LiteralPath $reconcileInputPath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    $multiple.create_call.status = 'success'
+    $multiple.create_call.returned_thread_id = 'review-thread-2'
+    $multiple.snapshots[1].threads = @(
+        [ordered]@{
+            thread_id = 'review-thread-1'
+            host_id = 'opaque-host-1'
+            created_at = '2026-07-20T00:00:15Z'
+            source_thread_id = 'source-thread-1'
+            activation_key = 'review-release-v051'
+            task_summary = $reconcileSummary
+        },
+        [ordered]@{
+            thread_id = 'review-thread-2'
+            host_id = 'opaque-host-1'
+            created_at = '2026-07-20T00:00:16Z'
+            source_thread_id = 'source-thread-1'
+            activation_key = 'review-release-v051'
+            task_summary = $reconcileSummary
+        }
+    )
+    $multiplePath = Join-Path $reconcileRun 'thread-reconcile-multiple.json'
+    $multiple | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $multiplePath
+    $multipleResult = & (
+        Join-Path $scriptRoot 'Resolve-ThreadReconciliation.ps1'
+    ) -InputPath $multiplePath -OutputPath (
+        Join-Path $reconcileRun 'receipts\duplicates.thread-reconciliation.json'
+    ) | ConvertFrom-Json -Depth 20
+    Assert-True (
+        $multipleResult.decision -eq 'duplicates_pending' -and
+        $multipleResult.adopted_thread_id -eq 'review-thread-2' -and
+        'review-thread-1' -in @($multipleResult.duplicate_thread_ids)
+    ) 'The matching create-call ID must be canonical when duplicates exist.'
 
     $roleCatalog = Get-Content -LiteralPath (
         Join-Path $skillRoot 'references/role-pack-catalog.json'
@@ -531,6 +739,76 @@ try {
         -WorkspaceRoot $testRoot | ConvertFrom-Json
     Assert-True ('draft' -in @($initial.ready_nodes)) 'Draft should initially be ready.'
     Assert-True ('review' -notin @($initial.ready_nodes)) 'Review should wait for draft.'
+    $draftReadDirectory = Join-Path $runDirectory 'thread-reads'
+    $null = New-Item -ItemType Directory -Path $draftReadDirectory
+    $draftReadPath = Join-Path $draftReadDirectory 'draft.json'
+    [ordered]@{
+        schemaVersion = 1
+        thread = [ordered]@{
+            threadId = 'test-thread-draft'
+        }
+        page = [ordered]@{
+            order = 'newest_first'
+        }
+        turns = @(
+            [ordered]@{
+                id = 'draft-final-turn'
+                status = 'completed'
+                items = @(
+                    [ordered]@{
+                        type = 'agentMessage'
+                        phase = 'final_answer'
+                        text = (
+                            'The draft defines interfaces, limits, and ' +
+                            'failure handling.'
+                        )
+                    }
+                )
+            },
+            [ordered]@{
+                id = 'draft-older-turn'
+                status = 'completed'
+                items = @(
+                    [ordered]@{
+                        type = 'agentMessage'
+                        phase = 'final_answer'
+                        text = 'An older result that must not be selected.'
+                    }
+                )
+            }
+        )
+    } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $draftReadPath
+    $draftReceiptRelative = 'receipts/draft.thread-result-receipt.json'
+    $draftReceiptPath = Join-Path $runDirectory $draftReceiptRelative
+    $draftReceipt = & (
+        Join-Path $scriptRoot 'New-ThreadResultReceipt.ps1'
+    ) -RunDirectory $runDirectory -ThreadId 'test-thread-draft' `
+        -HostId 'opaque-host-1' -ThreadReadPath $draftReadPath `
+        -OutputPath $draftReceiptPath `
+        -AdoptedFindings @('Draft satisfies the bounded section contract.') |
+        ConvertFrom-Json -Depth 20
+    Assert-True ($draftReceipt.receipt_hash -match '^[0-9a-f]{64}$') (
+        'Thread result collection must produce an immutable receipt.'
+    )
+    Assert-True ($draftReceipt.final_turn_id -eq 'draft-final-turn') (
+        'Result collection must select the newest completed turn.'
+    )
+    $runningReadPath = Join-Path $draftReadDirectory 'draft-running.json'
+    $runningCapture = Get-Content -LiteralPath $draftReadPath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    $runningCapture.turns[0].status = 'running'
+    $runningCapture | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $runningReadPath
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'New-ThreadResultReceipt.ps1') `
+            -RunDirectory $runDirectory -ThreadId 'test-thread-draft' `
+            -HostId 'opaque-host-1' -ThreadReadPath $runningReadPath `
+            -OutputPath (
+                Join-Path $runDirectory 'receipts/running.thread-result-receipt.json'
+            ) -AdoptedFindings @('Must not be accepted.') | Out-Null
+    } 'Newest thread turn is not completed' (
+        'An older completed turn cannot mask a newer running turn.'
+    )
 
     $waveBindingRun = Join-Path $testRoot 'wave-binding-run'
     & (Join-Path $scriptRoot 'New-OrchestrationRun.ps1') `
@@ -605,7 +883,10 @@ try {
             'artifacts/draft/output.md'
         } else { $null }
         $evidence = if ($status -eq 'completed') {
-            @('artifact:artifacts/draft/output.md')
+            @(
+                'artifact:artifacts/draft/output.md',
+                "artifact:$draftReceiptRelative"
+            )
         } else { @() }
         $inputTokensDelta = if ($status -eq 'completed') { 1200 } else { 0 }
         $outputTokensDelta = if ($status -eq 'completed') { 600 } else { 0 }
@@ -747,6 +1028,113 @@ try {
     & (Join-Path $scriptRoot 'New-OrchestrationRun.ps1') `
         -PlanPath $startupRetryPlanPath -RunDirectory $startupRetryRun `
         -WorkspaceRoot $skillRoot | Out-Null
+    $startupPreviewPath = Join-Path $startupRetryRun (
+        'receipts/draft-role-preview.md'
+    )
+    & (Join-Path $scriptRoot 'New-RoleActivationPreview.ps1') `
+        -PlanPath $startupRetryPlanPath -NodeId 'draft' `
+        -OutputPath $startupPreviewPath | Out-Null
+    $startupActivation = & (
+        Join-Path $scriptRoot 'New-ThreadActivationReservation.ps1'
+    ) -RunDirectory $startupRetryRun -ActivationKey 'startup-attempt-1' `
+        -SourceThreadId 'startup-source-thread' `
+        -TaskSummary 'Materialize the draft worker.' `
+        -RolePreviewPath $startupPreviewPath | ConvertFrom-Json -Depth 20
+    $startupReconciliationInputPath = Join-Path $startupRetryRun (
+        'startup-reconciliation-input.json'
+    )
+    [ordered]@{
+        activation_key = 'startup-attempt-1'
+        source_thread_id = 'startup-source-thread'
+        task_summary = 'Materialize the draft worker.'
+        window_start_utc = '2026-07-20T00:00:00Z'
+        window_end_utc = '2026-07-20T00:00:10Z'
+        reservation_path = $startupActivation.reservation_path
+        create_call = [ordered]@{ status = 'error' }
+        snapshots = @(
+            [ordered]@{
+                captured_at = '2026-07-20T00:00:01Z'
+                threads = @()
+            },
+            [ordered]@{
+                captured_at = '2026-07-20T00:00:10Z'
+                threads = @()
+            }
+        )
+    } | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $startupReconciliationInputPath
+    $startupReconciliationRelative = (
+        'receipts/startup.thread-reconciliation.json'
+    )
+    & (Join-Path $scriptRoot 'Resolve-ThreadReconciliation.ps1') `
+        -InputPath $startupReconciliationInputPath `
+        -OutputPath (
+            Join-Path $startupRetryRun $startupReconciliationRelative
+        ) | Out-Null
+    $startupInputOriginal = Get-Content -LiteralPath (
+        $startupReconciliationInputPath
+    ) -Raw
+    Add-Content -LiteralPath $startupReconciliationInputPath -Value ' '
+    Assert-ThrowsLike {
+        Read-ThreadReconciliationReceipt -Path (
+            Join-Path $startupRetryRun $startupReconciliationRelative
+        ) -RunDirectory $startupRetryRun -ExpectedDecision 'no_match' |
+            Out-Null
+    } 'input hash mismatch' (
+        'A reconciliation receipt must remain bound to its raw list input.'
+    )
+    Set-Content -LiteralPath $startupReconciliationInputPath `
+        -Value $startupInputOriginal -NoNewline
+    $validStartupReceiptPath = Join-Path $startupRetryRun (
+        $startupReconciliationRelative
+    )
+    $forgedStartupReceipt = Get-Content -LiteralPath $validStartupReceiptPath `
+        -Raw | ConvertFrom-Json -AsHashtable -Depth 30
+    $forgedStartupReceipt.activation_reservation_hash = '0' * 64
+    $forgedStartupPayload = [ordered]@{
+        schema_version = [string]$forgedStartupReceipt.schema_version
+        reconciliation_input_path = (
+            [string]$forgedStartupReceipt.reconciliation_input_path
+        )
+        reconciliation_input_hash = (
+            [string]$forgedStartupReceipt.reconciliation_input_hash
+        )
+        activation_key = [string]$forgedStartupReceipt.activation_key
+        activation_reservation_hash = (
+            [string]$forgedStartupReceipt.activation_reservation_hash
+        )
+        source_thread_id = [string]$forgedStartupReceipt.source_thread_id
+        task_summary_hash = [string]$forgedStartupReceipt.task_summary_hash
+        window_start_utc = [string]$forgedStartupReceipt.window_start_utc
+        window_end_utc = [string]$forgedStartupReceipt.window_end_utc
+        create_call_status = [string]$forgedStartupReceipt.create_call_status
+        returned_thread_id = $forgedStartupReceipt.returned_thread_id
+        snapshot_count = [int]$forgedStartupReceipt.snapshot_count
+        visibility_delay_seconds = (
+            [double]$forgedStartupReceipt.visibility_delay_seconds
+        )
+        snapshot_captured_at = @($forgedStartupReceipt.snapshot_captured_at)
+        matched_thread_ids = @($forgedStartupReceipt.matched_thread_ids)
+        decision = [string]$forgedStartupReceipt.decision
+        adopted_thread_id = $forgedStartupReceipt.adopted_thread_id
+        adopted_host_id = $forgedStartupReceipt.adopted_host_id
+        duplicate_thread_ids = @($forgedStartupReceipt.duplicate_thread_ids)
+    }
+    $forgedStartupReceipt.receipt_hash = Get-TextSha256 (
+        $forgedStartupPayload | ConvertTo-Json -Compress -Depth 20
+    )
+    $forgedStartupReceiptPath = Join-Path $startupRetryRun (
+        'receipts/forged.thread-reconciliation.json'
+    )
+    $forgedStartupReceipt | ConvertTo-Json -Depth 30 |
+        Set-Content -LiteralPath $forgedStartupReceiptPath
+    Assert-ThrowsLike {
+        Read-ThreadReconciliationReceipt -Path $forgedStartupReceiptPath `
+            -RunDirectory $startupRetryRun -ExpectedDecision 'no_match' |
+            Out-Null
+    } 'activation reservation hash mismatch' (
+        'A self-consistent fake receipt cannot replace a real reservation.'
+    )
     & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
         -RunDirectory $startupRetryRun -NodeId 'draft' `
         -Status 'launch_reserved' -Message 'first startup reserved' `
@@ -755,10 +1143,20 @@ try {
         -RunDirectory $startupRetryRun -NodeId 'draft' `
         -Status 'materializing' -Message 'first startup materializing' `
         -IdempotencyKey 'startup-first-materializing' | Out-Null
+    Assert-ThrowsLike -Action {
+        & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+            -RunDirectory $startupRetryRun -NodeId 'draft' -Status 'failed' `
+            -Message 'ambiguous creation receipt' `
+            -ErrorClass 'startup_unmaterialized' `
+            -IdempotencyKey 'startup-ambiguous-failed' | Out-Null
+    } -ExpectedMessage 'ReconciliationReceiptPath' -Message (
+        'An ambiguous creation receipt must not authorize a duplicate launch.'
+    )
     & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
         -RunDirectory $startupRetryRun -NodeId 'draft' -Status 'failed' `
         -Message 'health probe confirmed no worker' `
         -ErrorClass 'startup_unmaterialized' `
+        -ReconciliationReceiptPath $startupReconciliationRelative `
         -IdempotencyKey 'startup-first-failed' | Out-Null
     & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
         -RunDirectory $startupRetryRun -NodeId 'draft' `
@@ -771,7 +1169,7 @@ try {
         'A confirmed unmaterialized startup should permit a replacement attempt.'
     )
     Assert-True ($startupRetryState.materialized_workers -eq 0) (
-        'A failed health probe must not count as a materialized Worker.'
+        'A reconciled no-match startup must not count as a materialized Worker.'
     )
     $fullPacket = & (Join-Path $scriptRoot 'New-WorkerPacket.ps1') `
         -PlanPath $examplePath -NodeId 'review' -WorkspaceRoot $testRoot -Full
@@ -796,9 +1194,20 @@ try {
             -Message "delta retry $status" -ThreadId $threadId -ModelId $modelId `
             -IdempotencyKey "delta-retry-1-$status" | Out-Null
     }
+    [ordered]@{
+        schema_version = '1.0'
+        node_id = 'draft'
+        action_key = 'draft-output-validation'
+        input_refs = @('test:draft-schema-v1')
+        repair_instruction = 'Repair the draft schema failure.'
+    } | ConvertTo-Json -Depth 10 |
+        Set-Content -LiteralPath (Join-Path $deltaRun 'delta-premise.json')
     & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
         -RunDirectory $deltaRun -NodeId 'draft' -Status 'failed' `
         -Message 'draft output failed validation' -ErrorClass 'output_invalid' `
+        -ActionKey 'draft-output-validation' `
+        -PremiseManifestPath 'delta-premise.json' `
+        -FailureCode 'schema.invalid' `
         -IdempotencyKey 'delta-retry-1-failed' | Out-Null
     $deltaPacket = & (Join-Path $scriptRoot 'New-WorkerPacket.ps1') `
         -PlanPath $examplePath -NodeId 'draft' -WorkspaceRoot $testRoot `
@@ -829,6 +1238,104 @@ try {
     Assert-True $unboundDeltaCaught (
         'Delta retry must bind to a real failed execution.'
     )
+
+    $retryGuardPlan = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $retryGuardPlan.run_id = 'retry-guard-001'
+    $retryGuardPlan.nodes[0].max_attempts = 2
+    $retryGuardPlan.limits.max_attempts_per_node = 2
+    $retryGuardPlan.limits.retry_reserve = 1
+    $retryGuardPlanPath = Join-Path $testRoot 'retry-guard-plan.json'
+    $retryGuardPlan | ConvertTo-Json -Depth 100 |
+        Set-Content -LiteralPath $retryGuardPlanPath
+    $retryGuardRun = Join-Path $testRoot 'retry-guard-run'
+    & (Join-Path $scriptRoot 'New-OrchestrationRun.ps1') `
+        -PlanPath $retryGuardPlanPath -RunDirectory $retryGuardRun `
+        -WorkspaceRoot $testRoot | Out-Null
+    foreach ($status in @(
+        'launch_reserved', 'materializing', 'materialized', 'running'
+    )) {
+        $threadId = if ($status -eq 'materialized') {
+            'retry-guard-thread-1'
+        } else { $null }
+        $modelId = if ($status -eq 'materialized') {
+            'gpt-5.6-sol'
+        } else { $null }
+        & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+            -RunDirectory $retryGuardRun -NodeId 'draft' -Status $status `
+            -Message "retry guard $status" -ThreadId $threadId `
+            -ModelId $modelId -IdempotencyKey "retry-guard-$status" |
+            Out-Null
+    }
+    [ordered]@{
+        schema_version = '1.0'
+        node_id = 'draft'
+        action_key = 'draft-schema-validation'
+        input_refs = @(
+            'artifact:artifacts/draft/output.md',
+            'test:draft-schema-failed'
+        )
+        repair_instruction = 'Add the missing required section.'
+    } | ConvertTo-Json -Depth 10 |
+        Set-Content -LiteralPath (
+            Join-Path $retryGuardRun 'guard-premise.json'
+        )
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+            -RunDirectory $retryGuardRun -NodeId 'draft' -Status 'failed' `
+            -Message 'deterministic failure without fingerprint' `
+            -ErrorClass 'output_invalid' -IdempotencyKey 'guard-missing' |
+            Out-Null
+    } 'require ActionKey' (
+        'Deterministic failures must provide stable action and premise data.'
+    )
+    & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+        -RunDirectory $retryGuardRun -NodeId 'draft' -Status 'failed' `
+        -Message 'deterministic output failure' `
+        -ErrorClass 'output_invalid' -ActionKey 'draft-schema-validation' `
+        -PremiseManifestPath 'guard-premise.json' `
+        -FailureCode 'schema.missing-section' `
+        -IdempotencyKey 'retry-guard-failed' | Out-Null
+    [ordered]@{
+        repair_instruction = '  Add  the missing required section.  '
+        input_refs = @(
+            ' test:draft-schema-failed ',
+            ' artifact:artifacts/draft/output.md '
+        )
+        action_key = ' draft-schema-validation '
+        node_id = 'draft'
+        schema_version = '1.0'
+    } | ConvertTo-Json -Depth 10 |
+        Set-Content -LiteralPath (
+            Join-Path $retryGuardRun 'same-guard-premise.json'
+        )
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+            -RunDirectory $retryGuardRun -NodeId 'draft' `
+            -Status 'launch_reserved' -Message 'repeat same failed repair' `
+            -ActionKey ' draft-schema-validation ' `
+            -PremiseManifestPath 'same-guard-premise.json' `
+            -IdempotencyKey 'retry-guard-blocked' | Out-Null
+    } 'Retry after a deterministic failure requires explicit authorization' (
+        'A deterministic failure must not launch again without user authorization.'
+    )
+    $guardFailure = Get-Content -LiteralPath (
+        Join-Path $retryGuardRun 'events.jsonl'
+    ) | Select-Object -Last 1 | ConvertFrom-Json -Depth 20
+    & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+        -RunDirectory $retryGuardRun -NodeId 'draft' `
+        -Status 'launch_reserved' -Message 'authorized retry' `
+        -ActionKey 'draft-schema-validation' `
+        -PremiseManifestPath 'guard-premise.json' `
+        -RetryAuthorization "user:$($guardFailure.hash)" `
+        -IdempotencyKey 'retry-guard-authorized' | Out-Null
+    $authorizedEvent = Get-Content -LiteralPath (
+        Join-Path $retryGuardRun 'events.jsonl'
+    ) | Select-Object -Last 1 | ConvertFrom-Json -Depth 20
+    Assert-True (
+        "source:retry-authorization:user:$($guardFailure.hash)" -in
+        @($authorizedEvent.evidence)
+    ) 'Explicit user retry authorization must be journaled and hash-bound.'
 
     $crowdedFirstWave = Get-Content -LiteralPath $examplePath -Raw |
         ConvertFrom-Json -AsHashtable -Depth 100
@@ -1432,6 +1939,41 @@ try {
     'validated proposal' | Set-Content -LiteralPath (
         Join-Path $finalDirectory 'proposal.md'
     )
+    $missingReceiptPath = "$draftReceiptPath.missing"
+    Move-Item -LiteralPath $draftReceiptPath -Destination $missingReceiptPath
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Test-OrchestrationCompletion.ps1') `
+            -RunDirectory $runDirectory | Out-Null
+    } 'result receipt does not exist' (
+        'Completion must reject a missing background-thread result receipt.'
+    )
+    Move-Item -LiteralPath $missingReceiptPath -Destination $draftReceiptPath
+    $receiptOriginal = Get-Content -LiteralPath $draftReceiptPath -Raw
+    $receiptTampered = $receiptOriginal |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    $receiptTampered.adopted_findings = @('silently replaced disposition')
+    $receiptTampered | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $draftReceiptPath
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Test-OrchestrationCompletion.ps1') `
+            -RunDirectory $runDirectory | Out-Null
+    } 'receipt hash mismatch' (
+        'Completion must reject a tampered background-thread result receipt.'
+    )
+    Set-Content -LiteralPath $draftReceiptPath -Value $receiptOriginal
+    $captureOriginal = Get-Content -LiteralPath $draftReadPath -Raw
+    $captureTampered = $captureOriginal |
+        ConvertFrom-Json -AsHashtable -Depth 20
+    $captureTampered.turns[0].items[0].text = 'silently replaced final answer'
+    $captureTampered | ConvertTo-Json -Depth 20 |
+        Set-Content -LiteralPath $draftReadPath
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Test-OrchestrationCompletion.ps1') `
+            -RunDirectory $runDirectory | Out-Null
+    } 'does not match its read-thread capture' (
+        'Completion must reject a result capture changed after receipt creation.'
+    )
+    Set-Content -LiteralPath $draftReadPath -Value $captureOriginal -NoNewline
     $completion = & (Join-Path $scriptRoot 'Test-OrchestrationCompletion.ps1') `
         -RunDirectory $runDirectory | ConvertFrom-Json
     Assert-True $completion.complete (

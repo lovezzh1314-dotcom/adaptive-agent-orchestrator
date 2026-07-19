@@ -32,15 +32,17 @@ The direct worker has no persistent role ID, project attachment, or pin. If the
 user asks for a named, reusable, project, or persistent role, use the durable
 role path instead.
 
-Read:
+Load references only when their path is active:
 
-- [context-efficiency.md](references/context-efficiency.md) for context,
-  packet, handoff, retry, and review rules;
-- [routing-policy.md](references/routing-policy.md) for topology and model
-  choice;
-- [workflow-contract.md](references/workflow-contract.md) for durable plans;
-- [role-system.md](references/role-system.md) before materializing any worker,
-  or when selecting, creating, or reusing a role.
+- read [context-efficiency.md](references/context-efficiency.md) only for a
+  nontrivial context, retry, handoff, or review decision;
+- read [routing-policy.md](references/routing-policy.md) only when selecting a
+  topology, capacity, or model;
+- read [workflow-contract.md](references/workflow-contract.md) only for a
+  durable run;
+- read [role-system.md](references/role-system.md) only for stored, custom,
+  reused, or industry roles. A direct temporary native subagent uses the
+  compact fields in this file and does not load the role manual.
 
 ## Explain every Worker before creation
 
@@ -49,28 +51,65 @@ main agent may adopt a role itself, defer it, or skip it when the work overlaps.
 Never fill available worker seats merely because roles exist.
 
 Before every direct or durable Worker, show its role, necessity versus main
-agent execution, concrete task, responsibilities, non-goals, input scope,
-deliverables, evidence rules, permissions, dependencies, and omission impact.
-If the user has not explicitly authorized automatic teaming, wait for approval
-or a requested change. Durable nodes record `user:<message-or-request>` for
-explicit approval or `policy:path:<project-relative-policy-file>` for automatic
-authorization;
+agent execution, execution form (`native subagent` or `independent background
+agent`) and why that form fits the task lifecycle, concrete task,
+responsibilities, non-goals, input scope, deliverables, evidence rules,
+permissions, dependencies, and omission impact. If the user has not explicitly
+authorized automatic teaming, wait for approval or a requested change. Durable
+nodes record `user:<message-or-request>` for explicit approval or
+`policy:path:<project-relative-policy-file>` for automatic authorization;
 never infer authority from the plan itself. Render the exact preview with:
 
 ```powershell
 pwsh -File scripts/New-RoleActivationPreview.ps1 `
-  -PlanPath <plan.json> -NodeId <agent-node-id>
+  -PlanPath <plan.json> -NodeId <agent-node-id> `
+  -OutputPath <run>/receipts/<node>-role-preview.md
 ```
 
-After materialization, report the role, actual Worker or thread ID, actual
-model, status, and any deviation from the preview. Repeat permissions or
-dependencies only when they changed. A failed health probe is not a created
-Worker and does not consume a seat. Target at most six active Workers: four
+Show that preview in commentary before invoking any creation tool. The preview
+file is evidence that the explanation was prepared, not proof that the user
+saw it; the main agent must still present it. Durable background reservations
+must bind this exact file and its hash. For direct native subagents, do not
+create a run merely for this evidence, but the same user-facing explanation
+must precede `spawn_agent`.
+
+After materialization, report the role, actual execution form, actual Worker or
+thread ID, actual model, status, and any deviation from the preview. Repeat
+permissions or dependencies only when they changed. A failed health probe is
+not proof of absence; it consumes no seat only after task-list reconciliation
+confirms that nothing materialized. Target at most six active Workers: four
 active background threads plus two reserved native-subagent slots. Clamp this
 to the platform's actual capacity. Idle registered roles or threads do not
-consume active slots. Keep a separate cumulative materialization ceiling for
-later waves and retries. If recovery cannot reconcile the root-task count,
-launch no new Worker.
+consume active slots. Keep a separate cumulative
+materialization ceiling for later waves and retries. If recovery cannot
+reconcile the root-task count, launch no new Worker.
+
+A creation-call error is not proof that no Worker was created. Before retrying
+any failed or ambiguous materialization, reconcile the recent task list using
+the source task, creation window, and task summary. Adopt one matching task;
+stop and archive extras if duplicates exist. Make only one creation call per
+stable activation key. Retry only when reconciliation confirms that no matching
+task materialized; if reconciliation is unavailable or ambiguous, stop and
+report `unknown` instead of retrying. Atomically reserve the activation key
+with `New-ThreadActivationReservation.ps1` and the saved role-preview path
+before the creation call, then
+produce the reconciliation decision with `Resolve-ThreadReconciliation.ps1`;
+do not infer it from the creation-call status alone. A confirmed no-match
+retry uses a new attempt activation key. Put the exact
+`<activation_key>...</activation_key>` and
+`<source_thread_id>...</source_thread_id>` markers in the background task
+prompt so the visible task-list preview can be matched without guessing.
+
+An independent background agent does not automatically return its result to
+the parent task. Register its thread ID and use `read_thread` as the primary
+result-collection path. `wait_threads` is only an optional background-thread
+wait optimization; it is not the native-subagent wait mechanism. If its
+handler is unavailable, fall back once to bounded thread reads rather than
+retrying the wait call. Native subagents use `list_agents` and `wait_agent`;
+independent background agents use `list_threads` and `read_thread`.
+Record the final turn and adopted/rejected findings with
+`New-ThreadResultReceipt.ps1`; do not treat silence as completion or continue
+final integration without the receipt.
 
 Use industry role packs only when a professional responsibility would improve
 the result. First list the compact catalog, then load only the selected
@@ -102,7 +141,9 @@ Create a handoff only when another session must resume or reuse the work.
 
 Retry with the prior-output pointer, failure evidence, and exact repair
 instruction. Do not resend the original context unless it changed or became
-unavailable.
+unavailable. After any deterministic failure, creating another Worker requires
+the user to authorize that exact failed event. The premise manifest is audit
+context, not an automatic retry authorization.
 
 ## Use durable control only when needed
 

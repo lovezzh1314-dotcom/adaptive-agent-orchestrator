@@ -42,7 +42,13 @@ param(
     [ValidateSet('startup_unmaterialized', 'runtime_transient',
         'model_incompatible', 'permission_denied', 'task_invalid',
         'output_invalid', 'ownership_conflict', 'unknown')]
-    [string] $ErrorClass
+    [string] $ErrorClass,
+
+    [string] $ActionKey,
+    [string] $PremiseManifestPath,
+    [string] $FailureCode,
+    [string] $RetryAuthorization,
+    [string] $ReconciliationReceiptPath
 )
 
 Set-StrictMode -Version Latest
@@ -103,10 +109,163 @@ if ($UsageSource -ne 'none' -and $usageDelta -eq 0) {
 $cleanEvidence = @($Evidence | Where-Object {
     -not [string]::IsNullOrWhiteSpace($_)
 })
+$deterministicFailureClasses = @(
+    'model_incompatible', 'permission_denied', 'task_invalid',
+    'output_invalid', 'ownership_conflict'
+)
+$normalizedActionKey = if ([string]::IsNullOrWhiteSpace($ActionKey)) {
+    $null
+} else {
+    $ActionKey.Trim()
+}
+$premiseFingerprint = $null
+$premiseRelativePath = $null
+if (-not [string]::IsNullOrWhiteSpace($PremiseManifestPath)) {
+    if ([IO.Path]::IsPathRooted($PremiseManifestPath)) {
+        throw 'PremiseManifestPath must be relative to the run directory.'
+    }
+    $premiseSegments = $PremiseManifestPath -split '[\\/]'
+    if (@($premiseSegments | Where-Object {
+        $_ -in @('', '.', '..') -or $_ -match '[\. ]$' -or $_.Contains(':')
+    }).Count -gt 0) {
+        throw 'PremiseManifestPath is unsafe.'
+    }
+    $runRoot = [IO.Path]::GetFullPath($RunDirectory).TrimEnd('\', '/')
+    $resolvedPremisePath = [IO.Path]::GetFullPath(
+        (Join-Path $runRoot $PremiseManifestPath)
+    )
+    if (-not $resolvedPremisePath.StartsWith(
+        $runRoot + [IO.Path]::DirectorySeparatorChar,
+        [StringComparison]::OrdinalIgnoreCase
+    ) -or -not (Test-Path -LiteralPath $resolvedPremisePath -PathType Leaf)) {
+        throw 'Premise manifest must be an existing file inside the run.'
+    }
+    $cursor = Split-Path -Parent $resolvedPremisePath
+    while ($cursor.StartsWith(
+        $runRoot,
+        [StringComparison]::OrdinalIgnoreCase
+    ) -and $cursor.Length -ge $runRoot.Length) {
+        if (((Get-Item -LiteralPath $cursor).Attributes -band
+            [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Premise manifest cannot cross a link or reparse point.'
+        }
+        if ($cursor -eq $runRoot) { break }
+        $cursor = Split-Path -Parent $cursor
+    }
+    $premise = Get-Content -LiteralPath $resolvedPremisePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 30
+    foreach ($requiredPremiseField in @(
+        'schema_version', 'node_id', 'action_key', 'input_refs',
+        'repair_instruction'
+    )) {
+        if (-not $premise.ContainsKey($requiredPremiseField)) {
+            throw "Premise manifest is missing '$requiredPremiseField'."
+        }
+    }
+    if ([string]$premise.schema_version -ne '1.0' -or
+        [string]$premise.node_id -ne $NodeId -or
+        ([string]$premise.action_key).Trim() -ne $normalizedActionKey -or
+        [string]::IsNullOrWhiteSpace([string]$premise.repair_instruction)) {
+        throw 'Premise manifest does not match the current node and action.'
+    }
+    $premiseInputRefs = @($premise.input_refs | ForEach-Object {
+        ([string]$_).Trim()
+    } | Sort-Object -Unique)
+    if ($premiseInputRefs.Count -eq 0 -or
+        @($premiseInputRefs | Where-Object {
+            $_ -notmatch '^(artifact|test|source|observation):\S.+$'
+        }).Count -gt 0) {
+        throw 'Premise manifest requires typed, non-empty input_refs.'
+    }
+    $canonicalPremise = [ordered]@{
+        schema_version = '1.0'
+        node_id = [string]$premise.node_id
+        action_key = $normalizedActionKey
+        input_refs = $premiseInputRefs
+        repair_instruction = [regex]::Replace(
+            ([string]$premise.repair_instruction).Trim(),
+            '\s+',
+            ' '
+        )
+    }
+    $premiseFingerprint = Get-TextSha256 (
+        $canonicalPremise | ConvertTo-Json -Compress -Depth 10
+    )
+    $premiseRelativePath = $PremiseManifestPath.Replace('\', '/')
+}
+if (-not [string]::IsNullOrWhiteSpace($FailureCode) -and
+    $FailureCode -notmatch '^[a-z0-9][a-z0-9._-]{0,63}$') {
+    throw 'FailureCode must be a stable lowercase code.'
+}
+if ($Status -eq 'failed' -and
+    $ErrorClass -in $deterministicFailureClasses) {
+    if ([string]::IsNullOrWhiteSpace($ActionKey) -or
+        [string]::IsNullOrWhiteSpace($premiseFingerprint) -or
+        [string]::IsNullOrWhiteSpace($FailureCode)) {
+        throw (
+            'Deterministic failures require ActionKey, PremiseManifestPath, ' +
+            'and FailureCode.'
+        )
+    }
+}
+$actionHash = if ([string]::IsNullOrWhiteSpace($normalizedActionKey)) {
+    $null
+} else {
+    Get-TextSha256 $normalizedActionKey
+}
+if ($actionHash) {
+    $cleanEvidence += "observation:action-key:$actionHash"
+}
+if (-not [string]::IsNullOrWhiteSpace($premiseFingerprint)) {
+    $cleanEvidence += "artifact:premise-manifest:$premiseRelativePath"
+    $cleanEvidence += (
+        'observation:premise-fingerprint:' +
+        $premiseFingerprint
+    )
+}
+if (-not [string]::IsNullOrWhiteSpace($FailureCode)) {
+    $cleanEvidence += "observation:failure-code:$FailureCode"
+}
+if ($Status -eq 'failed' -and
+    $ErrorClass -in $deterministicFailureClasses) {
+    $failureFingerprint = Get-TextSha256 (
+        "$actionHash|$premiseFingerprint|" +
+        "$ErrorClass|$FailureCode"
+    )
+    $cleanEvidence += "observation:failure-fingerprint:$failureFingerprint"
+}
+if (-not [string]::IsNullOrWhiteSpace($RetryAuthorization)) {
+    $cleanEvidence += "source:retry-authorization:$RetryAuthorization"
+}
+$reconciliationReceipt = $null
+if (-not [string]::IsNullOrWhiteSpace($ReconciliationReceiptPath)) {
+    if ([IO.Path]::IsPathRooted($ReconciliationReceiptPath)) {
+        throw 'ReconciliationReceiptPath must be relative to the run directory.'
+    }
+    $reconciliationReceipt = Read-ThreadReconciliationReceipt -Path (
+        Join-Path $RunDirectory $ReconciliationReceiptPath
+    ) -RunDirectory $RunDirectory -ExpectedDecision 'no_match'
+    $normalizedReconciliationPath = $ReconciliationReceiptPath.Replace('\', '/')
+    $cleanEvidence += (
+        "artifact:thread-reconciliation:$normalizedReconciliationPath"
+    )
+    $cleanEvidence += (
+        'observation:thread-reconciliation-hash:' +
+        [string]$reconciliationReceipt.receipt_hash
+    )
+    $cleanEvidence += 'observation:task-list-reconciled-no-match'
+}
 foreach ($entry in $cleanEvidence) {
     if ($entry -notmatch '^(artifact|test|source|observation):\S.+$') {
         throw "Evidence must use kind:value format: artifact, test, source, or observation."
     }
+}
+if ($Status -eq 'failed' -and $ErrorClass -eq 'startup_unmaterialized' -and
+    $null -eq $reconciliationReceipt) {
+    throw (
+        'startup_unmaterialized requires a verified no-match ' +
+        'ReconciliationReceiptPath.'
+    )
 }
 $requestFingerprint = Get-TextSha256 (
     [ordered]@{
@@ -323,6 +482,71 @@ try {
             ) | Select-Object -Last 1
             if ($lastFailure.error_class -ne 'startup_unmaterialized') {
                 throw 'Retry reserve is exhausted.'
+            }
+        }
+        if ($priorState -eq 'failed') {
+            $lastFailure = @(
+                $history | Where-Object { $_.status -eq 'failed' }
+            ) | Select-Object -Last 1
+            if ($lastFailure.error_class -eq 'startup_unmaterialized' -and
+                'observation:task-list-reconciled-no-match' -notin
+                @($lastFailure.evidence)) {
+                throw 'Startup retry requires task-list reconciliation evidence.'
+            }
+            if ($lastFailure.error_class -eq 'startup_unmaterialized') {
+                $reconciliationArtifact = @(
+                    $lastFailure.evidence | Where-Object {
+                        $_ -like 'artifact:thread-reconciliation:*'
+                    }
+                ) | Select-Object -Last 1
+                $reconciliationHashEvidence = @(
+                    $lastFailure.evidence | Where-Object {
+                        $_ -like 'observation:thread-reconciliation-hash:*'
+                    }
+                ) | Select-Object -Last 1
+                if ([string]::IsNullOrWhiteSpace(
+                    [string]$reconciliationArtifact
+                ) -or [string]::IsNullOrWhiteSpace(
+                    [string]$reconciliationHashEvidence
+                )) {
+                    throw 'Startup retry lacks a bound reconciliation receipt.'
+                }
+                $relativeReconciliationPath = (
+                    [string]$reconciliationArtifact
+                ).Substring('artifact:thread-reconciliation:'.Length)
+                $verifiedReconciliation = Read-ThreadReconciliationReceipt `
+                    -Path (Join-Path $RunDirectory $relativeReconciliationPath) `
+                    -RunDirectory $RunDirectory -ExpectedDecision 'no_match'
+                if ([string]$reconciliationHashEvidence -ne (
+                    'observation:thread-reconciliation-hash:' +
+                    [string]$verifiedReconciliation.receipt_hash
+                )) {
+                    throw 'Startup retry reconciliation receipt was changed.'
+                }
+            }
+            if ($lastFailure.error_class -in $deterministicFailureClasses) {
+                if ([string]::IsNullOrWhiteSpace($ActionKey) -or
+                    [string]::IsNullOrWhiteSpace($premiseFingerprint)) {
+                    throw (
+                        'Retry after a deterministic failure requires ' +
+                        'ActionKey and PremiseManifestPath.'
+                    )
+                }
+                $requiredAuthorization = "user:$($lastFailure.hash)"
+                if ($RetryAuthorization -ne $requiredAuthorization) {
+                    throw (
+                        'Retry after a deterministic failure requires ' +
+                        "explicit authorization '$requiredAuthorization'."
+                    )
+                }
+                $authorizationEvidence = (
+                    "source:retry-authorization:$requiredAuthorization"
+                )
+                if (@($events | Where-Object {
+                    $authorizationEvidence -in @($_.evidence)
+                }).Count -gt 0) {
+                    throw 'Retry authorization was already consumed.'
+                }
             }
         }
 

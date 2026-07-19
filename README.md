@@ -1,6 +1,6 @@
 # Adaptive Agent Orchestrator
 
-[简体中文](README.zh-CN.md) · [v0.5.0 release notes](docs/releases/v0.5.0.md) · [Release history](docs/releases/README.md) · [Installation](#installation) · [How it works](#how-it-works) · [Limitations](#current-limitations)
+[简体中文](README.zh-CN.md) · [v0.5.1 release notes](docs/releases/v0.5.1.md) · [Release history](docs/releases/README.md) · [Installation](#installation) · [How it works](#how-it-works) · [Limitations](#current-limitations)
 
 `adaptive-agent-orchestrator` is a Codex Skill for reducing duplicated context
 and reasoning while coordinating genuinely independent workstreams. It uses a
@@ -29,6 +29,11 @@ task. Savings must be demonstrated by fair end-to-end benchmarks.
   a durable plan, journal, stored role, or miniature lifecycle.
 - **Visible role activation:** every Worker is explained before creation and
   reported after materialization; choosing a role never forces a Worker.
+- **Creation reconciliation:** every background creation call is reconciled
+  against the visible task list. Unknown state does not trigger blind retry,
+  and duplicate materializations are detected before expansion continues.
+- **Result collection gate:** required independent-background results must be
+  explicitly read and recorded in a hash-bound receipt before completion.
 - **Protected active capacity:** target six active Workers while keeping two
   transient-subagent slots available beside four active persistent Workers;
   actual capacity is clamped to the runtime.
@@ -49,7 +54,9 @@ task. Savings must be demonstrated by fair end-to-end benchmarks.
   samples critical output; high-risk work may use one independent reviewer.
 - **Delta retry:** retries carry the previous-output pointer, failure evidence,
   and repair instruction rather than replaying the full packet; delta mode is
-  accepted only for the same node in a hash-checked failed run.
+  accepted only for the same node in a hash-checked failed run, and an
+  every deterministic Worker failure requires event-bound user authorization
+  before another Worker launch.
 - **One controller:** workers cannot recursively create workers.
 - **Recoverable execution:** immutable plans, hash-chained events, handoffs
   only when resume/reuse needs them, write-scope checks, and completion gates.
@@ -104,9 +111,15 @@ skills/adaptive-agent-orchestrator/
     ├── New-AgentRole.ps1
     ├── New-OrchestrationRun.ps1
     ├── New-RoleActivationPreview.ps1
+    ├── New-ThreadActivationReservation.ps1
     ├── New-ThreadHandoff.ps1
+    ├── New-ThreadResultReceipt.ps1
     ├── New-WorkerPacket.ps1
     ├── Orchestration.Common.ps1
+    ├── Resolve-OrchestrationPreset.ps1
+    ├── Resolve-ThreadReconciliation.ps1
+    ├── Resolve-WorkerCapacity.ps1
+    ├── Resolve-WorkerModel.ps1
     ├── Test-OrchestrationBenchmark.ps1
     ├── Test-OrchestrationBenchmarkSuite.ps1
     ├── Test-OrchestrationCompletion.ps1
@@ -201,10 +214,10 @@ state, integrates results, and performs authorized external actions.
 
 ## Validation
 
-The v0.5.0 release passes:
+The v0.5.1 release passes:
 
-- PowerShell parser validation for all 18 scripts;
-- 438 self-test assertions;
+- PowerShell parser validation for all 21 scripts;
+- 464 self-test assertions;
 - 47 intentionally invalid negative-test plans correctly rejected;
 - plan, metadata, journal, handoff, dependency, idempotency, ownership,
   context-overlap, progressive-dispatch, short-packet, and completion tests;

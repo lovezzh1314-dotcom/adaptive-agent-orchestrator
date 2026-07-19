@@ -5,7 +5,7 @@
 A durable plan is a JSON object with:
 
 - `schema_version`: currently `"1.0"`;
-- `policy_version`: currently `"0.5.0"`, used to validate and replay the run;
+- `policy_version`: currently `"0.5.1"`, used to validate and replay the run;
 - `run_id`: unique, stable identifier;
 - `orchestrator`: the single controller identity and delegation authority;
 - `goal`: concrete outcome;

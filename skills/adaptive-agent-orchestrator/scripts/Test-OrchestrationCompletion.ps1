@@ -6,6 +6,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $scriptRoot 'Orchestration.Common.ps1')
 $planPath = Join-Path $RunDirectory 'plan.json'
 $runPath = Join-Path $RunDirectory 'run.json'
 if (-not (Test-Path -LiteralPath $planPath) -or
@@ -22,10 +23,58 @@ $errors = [Collections.Generic.List[string]]::new()
 $successStates = @('validated', 'adopted', 'archived')
 
 foreach ($nodeId in @($plan.completion.required_nodes)) {
+    $planNode = @($plan.nodes | Where-Object { $_.id -eq $nodeId }) |
+        Select-Object -First 1
     $nodeState = @($state.nodes | Where-Object { $_.id -eq $nodeId }) |
         Select-Object -First 1
     if ($null -eq $nodeState -or $nodeState.status -notin $successStates) {
         $errors.Add("Required node '$nodeId' is not validated.")
+        continue
+    }
+    if ($planNode.kind -eq 'agent' -and
+        $planNode.topology -eq 'background-thread') {
+        $receiptEvidence = @($nodeState.evidence | Where-Object {
+            $_ -like 'artifact:receipts/*.thread-result-receipt.json'
+        }) | Select-Object -Last 1
+        if ([string]::IsNullOrWhiteSpace([string]$receiptEvidence)) {
+            $errors.Add(
+                "Background node '$nodeId' lacks a thread result receipt."
+            )
+            continue
+        }
+        $relativeReceipt = [string]$receiptEvidence -replace '^artifact:', ''
+        $receiptSegments = $relativeReceipt -split '[\\/]'
+        if (@($receiptSegments | Where-Object {
+            $_ -in @('', '.', '..') -or $_ -match '[\. ]$' -or $_.Contains(':')
+        }).Count -gt 0) {
+            $errors.Add(
+                "Background node '$nodeId' has an unsafe result receipt path."
+            )
+            continue
+        }
+        $receiptPath = [IO.Path]::GetFullPath(
+            (Join-Path $RunDirectory $relativeReceipt)
+        )
+        $runRoot = [IO.Path]::GetFullPath($RunDirectory).TrimEnd('\', '/')
+        if (-not $receiptPath.StartsWith(
+            $runRoot + [IO.Path]::DirectorySeparatorChar,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+            $errors.Add(
+                "Background node '$nodeId' result receipt escapes the run."
+            )
+            continue
+        }
+        try {
+            $null = Read-ThreadResultReceipt `
+                -Path $receiptPath -ExpectedThreadId $nodeState.thread_id `
+                -RunDirectory $RunDirectory
+        } catch {
+            $errors.Add(
+                "Background node '$nodeId' result receipt is invalid: " +
+                $_.Exception.Message
+            )
+        }
     }
 }
 

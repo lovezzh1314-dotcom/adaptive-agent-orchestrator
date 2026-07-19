@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.1 - 2026-07-20
+
+Reliability release for Worker materialization, result collection, and
+deterministic retry control. Plan policy advances to `0.5.1`.
+
+- Atomically reserve each activation key, then reconcile every
+  independent-background creation call against task-list snapshots before
+  deciding whether it succeeded, failed, or may be retried.
+- Bind the reservation to a saved role-activation preview and require the
+  user-facing explanation before any creation call.
+- Adopt one matching thread, deterministically retain one canonical thread
+  when duplicates exist, and stop automatic retry while the state is unknown.
+- Distinguish native-subagent lifecycle tools from independent-background
+  thread tools; `wait_threads` is optional and never required for native
+  subagents.
+- Require a hash-bound final-result receipt tied to a captured `read_thread`
+  response before a required background node can pass the completion gate.
+- Derive deterministic retry premises from a canonical run-local manifest
+  rather than trusting a caller-supplied fingerprint.
+- Require user authorization bound to the exact prior event before launching
+  another Worker after a deterministic failure.
+- Keep transient failures bounded and preserve delta retry without replaying
+  the original context.
+
 ## 0.5.0 - 2026-07-19
 
 First stable-channel release. Mode, model-routing, and active-capacity rules

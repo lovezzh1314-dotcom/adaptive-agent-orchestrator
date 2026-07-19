@@ -96,8 +96,8 @@ $plan = Get-Content -LiteralPath $resolvedPlan -Raw | ConvertFrom-Json -Depth 10
 if ((Get-PlanProperty $plan 'schema_version') -ne '1.0') {
     Add-PlanError "schema_version must be '1.0'."
 }
-if ((Get-PlanProperty $plan 'policy_version') -ne '0.5.0') {
-    Add-PlanError "policy_version must be '0.5.0'."
+if ((Get-PlanProperty $plan 'policy_version') -ne '0.5.1') {
+    Add-PlanError "policy_version must be '0.5.1'."
 }
 $null = Require-Text $plan 'run_id' 'Plan'
 $null = Require-Text $plan 'goal' 'Plan'

@@ -120,7 +120,7 @@ skills/adaptive-agent-orchestrator/
 Ask Codex:
 
 ```text
-$skill-installer install https://github.com/lovezzh1314-dotcom/adaptive-agent-orchestrator/tree/main/skills/adaptive-agent-orchestrator
+$skill-installer install https://github.com/Gabrielzzh/adaptive-agent-orchestrator/tree/main/skills/adaptive-agent-orchestrator
 ```
 
 Restart Codex after installation. Manual installation copies the complete

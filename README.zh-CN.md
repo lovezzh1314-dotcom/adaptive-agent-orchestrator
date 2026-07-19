@@ -112,7 +112,7 @@ skills/adaptive-agent-orchestrator/
 对 Codex 说：
 
 ```text
-$skill-installer install https://github.com/lovezzh1314-dotcom/adaptive-agent-orchestrator/tree/main/skills/adaptive-agent-orchestrator
+$skill-installer install https://github.com/Gabrielzzh/adaptive-agent-orchestrator/tree/main/skills/adaptive-agent-orchestrator
 ```
 
 安装后重启 Codex。手动安装时，把完整

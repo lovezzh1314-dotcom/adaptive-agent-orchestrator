@@ -5,7 +5,7 @@
 A durable plan is a JSON object with:
 
 - `schema_version`: currently `"1.0"`;
-- `policy_version`: currently `"0.4.2"`, used to validate and replay the run;
+- `policy_version`: currently `"0.5.0"`, used to validate and replay the run;
 - `run_id`: unique, stable identifier;
 - `orchestrator`: the single controller identity and delegation authority;
 - `goal`: concrete outcome;
@@ -38,6 +38,9 @@ Each node contains:
   "purpose": "verification",
   "task": "Find control-plane and recovery failures",
   "capability": "strong",
+  "model": "gpt-5.6-sol",
+  "model_reason": "Architecture review requires high-ambiguity judgment.",
+  "model_authorization": "not-required",
   "effort": "high",
   "read_only": true,
   "write_scope": [],
@@ -80,6 +83,12 @@ Workflow values describe behavior, not execution products:
 - `loop`;
 - `race`.
 
+Resolve `auto` before materializing a durable plan. `quick` has at most one
+fresh native subagent, no handoff, no human gate, and no session reuse. `team`
+has at least two independent agent workstreams. `workflow` requires at least
+one durable reason: recovery/reuse, a handoff, an agent dependency, multiple
+writable agents, a human gate, loop, or race.
+
 ## Thread and context contract
 
 Treat the project, role, workstream, and execution thread as different objects:
@@ -96,8 +105,27 @@ Every agent node declares:
   (`user:` or `policy:path:`) recorded after the pre-creation preview;
 
 `authorization_evidence` is an auditable pointer, not a self-authorizing
-credential. The controller verifies it against current user or project policy
-before materialization.
+credential. The controller verifies a `user:` pointer against current user
+context before materialization; deterministic scripts cannot prove that
+conversation authority cryptographically. Scripts do verify that a
+`policy:path:` pointer names an existing safe project-relative file.
+
+Every agent node also declares the model resolved at dispatch:
+
+- `model`: an available GPT-5.6 Worker model;
+- `model_reason`: a short task-specific reason;
+- `model_authorization`: `not-required`, `user-confirmed`,
+  `policy-confirmed`, or `experimental-user-request`.
+- `model_authorization_evidence`: required for every non-default authorization;
+  use `user:<message-or-request>` or a verified
+  `policy:path:<project-relative-policy-file>`.
+
+The default automatic pool contains Luna and Sol. Terra requires
+`experimental-user-request`. Model or effort escalation requires
+`user-confirmed` or a verified bounded `policy-confirmed` authorization.
+Creation reports the actual model; it never treats the planned model as proof
+of materialization. Retry routing derives the prior actual model and planned
+effort from the validated prior run; callers cannot restate those values.
 
 ## Optional manuscript profile
 

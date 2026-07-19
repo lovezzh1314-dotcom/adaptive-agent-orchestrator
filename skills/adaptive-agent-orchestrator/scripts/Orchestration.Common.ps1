@@ -21,7 +21,7 @@ function Get-OrchestrationEventHash {
         'sequence', 'prev_hash', 'timestamp', 'event', 'run_id', 'plan_hash',
         'workspace_root',
         'policy_version', 'actor', 'node_id', 'role_id', 'prior_state', 'status',
-        'message', 'thread_id', 'artifact', 'topology', 'capability',
+        'message', 'thread_id', 'model_id', 'artifact', 'topology', 'capability',
         'effort', 'wave', 'attempt', 'execution_slot_delta', 'error_class',
         'input_tokens_delta', 'output_tokens_delta',
         'coordination_tokens_delta', 'usage_source',

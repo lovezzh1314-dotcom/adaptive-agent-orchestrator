@@ -1,6 +1,6 @@
 # Adaptive Agent Orchestrator
 
-[简体中文](README.zh-CN.md) · [v0.4.2 release notes](docs/releases/v0.4.2-beta.1.md) · [Installation](#installation) · [How it works](#how-it-works) · [Limitations](#current-limitations)
+[简体中文](README.zh-CN.md) · [v0.5.0 release notes](docs/releases/v0.5.0.md) · [Release history](docs/releases/README.md) · [Installation](#installation) · [How it works](#how-it-works) · [Limitations](#current-limitations)
 
 `adaptive-agent-orchestrator` is a Codex Skill for reducing duplicated context
 and reasoning while coordinating genuinely independent workstreams. It uses a
@@ -29,8 +29,16 @@ task. Savings must be demonstrated by fair end-to-end benchmarks.
   a durable plan, journal, stored role, or miniature lifecycle.
 - **Visible role activation:** every Worker is explained before creation and
   reported after materialization; choosing a role never forces a Worker.
-- **Four-Worker ceiling:** the controller counts direct and durable Workers
-  together; deterministic scripts enforce four inside each durable run.
+- **Protected active capacity:** target six active Workers while keeping two
+  transient-subagent slots available beside four active persistent Workers;
+  actual capacity is clamped to the runtime.
+- **Automatic model routing:** Luna handles bounded mechanical work; Sol
+  handles judgment, writing, implementation, and review. Terra remains an
+  explicit experiment.
+- **Deterministic modes:** `auto` resolves to a lightweight quick path,
+  independent team, or recoverable workflow without another routing Agent.
+- **Reusable research evidence:** an on-demand curator builds a source
+  registry only when multiple downstream workstreams will reuse it.
 - **On-demand professional roles:** built-in industry role packs expose only
   the selected contract and can expand without bloating every Worker prompt.
 - **Manuscript co-authorship:** methods and domain specialists can own bounded
@@ -193,11 +201,11 @@ state, integrates results, and performs authorized external actions.
 
 ## Validation
 
-The v0.4.2-beta.1 candidate currently passes:
+The v0.5.0 release passes:
 
-- PowerShell parser validation for all 15 scripts;
-- 369 self-test assertions;
-- 36 intentionally invalid negative-test plans correctly rejected;
+- PowerShell parser validation for all 18 scripts;
+- 438 self-test assertions;
+- 47 intentionally invalid negative-test plans correctly rejected;
 - plan, metadata, journal, handoff, dependency, idempotency, ownership,
   context-overlap, progressive-dispatch, short-packet, and completion tests;
 - a synthetic single-case benchmark test.

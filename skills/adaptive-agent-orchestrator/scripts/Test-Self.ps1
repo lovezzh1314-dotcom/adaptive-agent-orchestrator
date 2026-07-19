@@ -45,6 +45,21 @@ function Assert-InvalidPlan {
     $script:invalidPlanCount++
 }
 
+function Assert-ThrowsLike {
+    param(
+        [scriptblock] $Action,
+        [string] $ExpectedMessage,
+        [string] $Message
+    )
+    $caught = $false
+    try {
+        & $Action
+    } catch {
+        $caught = $_.Exception.Message -like "*$ExpectedMessage*"
+    }
+    Assert-True $caught $Message
+}
+
 try {
     $null = New-Item -ItemType Directory -Path $testRoot
 
@@ -60,6 +75,8 @@ try {
         'Role:', 'Mission:', 'Identity:', 'Why a Worker is needed:', 'Concrete task:',
         'Responsibilities:', 'Non-goals:', 'Inputs and context scope:',
         'Excluded context:', 'Topology/session:',
+        'Planned model/effort:', 'Model reason:', 'Model authorization:',
+        'Model authorization evidence:',
         'Deliverables:', 'Evidence rules:', 'Permissions and write scope:',
         'Dependencies:', 'If omitted:', 'Authorization basis:',
         'Authorization evidence:'
@@ -84,16 +101,22 @@ try {
     $roleCatalog = Get-Content -LiteralPath (
         Join-Path $skillRoot 'references/role-pack-catalog.json'
     ) -Raw | ConvertFrom-Json -Depth 20
-    Assert-True (@($roleCatalog.packs).Count -eq 4) (
-        'The compact catalog should contain four industry packs.'
+    Assert-True (@($roleCatalog.packs).Count -eq 5) (
+        'The compact catalog should contain four industry packs and one research pack.'
     )
     foreach ($rolePack in @($roleCatalog.packs)) {
         $packRoles = @(Get-Content -LiteralPath (
             Join-Path (Join-Path $skillRoot 'references') $rolePack.file
         ) -Raw | ConvertFrom-Json -Depth 50)
-        Assert-True ($packRoles.Count -ge 3 -and $packRoles.Count -le 4) (
-            "Role pack '$($rolePack.id)' should contain three or four roles."
-        )
+        if ($rolePack.id -eq 'research-evidence') {
+            Assert-True ($packRoles.Count -eq 1) (
+                'The research evidence pack should contain one reusable role.'
+            )
+        } else {
+            Assert-True ($packRoles.Count -ge 3 -and $packRoles.Count -le 4) (
+                "Industry role pack '$($rolePack.id)' should contain three or four roles."
+            )
+        }
         Assert-True (@($packRoles.id | Select-Object -Unique).Count -eq $packRoles.Count) (
             "Role pack '$($rolePack.id)' should use unique role IDs."
         )
@@ -117,6 +140,215 @@ try {
     )
     Assert-True ($equityRole -notlike '*thesis-risk-reviewer*') (
         'An exact role query should not inject neighboring role contracts.'
+    )
+    $researchRole = & (Join-Path $scriptRoot 'Get-AgentRolePreset.ps1') `
+        -Domain 'research-evidence' -RoleId 'research-evidence-curator'
+    Assert-True ($researchRole -like '*reusable, auditable evidence base*') (
+        'The research evidence role should return its bounded reusable mission.'
+    )
+
+    $quickPreset = & (
+        Join-Path $scriptRoot 'Resolve-OrchestrationPreset.ps1'
+    ) -RuntimeWorkerCapacity 6 | ConvertFrom-Json
+    Assert-True ($quickPreset.mode -eq 'quick') (
+        'Auto should resolve a small task to quick.'
+    )
+    Assert-True ($quickPreset.profile -eq 'lean') (
+        'A low-risk quick task should use lean verification.'
+    )
+    Assert-True (
+        $quickPreset.limits.persistent_active_limit -eq 4 -and
+        $quickPreset.limits.transient_reserved_slots -eq 2
+    ) 'Six-slot capacity should reserve four persistent and two transient slots.'
+
+    $teamPreset = & (
+        Join-Path $scriptRoot 'Resolve-OrchestrationPreset.ps1'
+    ) -IndependentWorkstreams 3 -Risk medium | ConvertFrom-Json
+    Assert-True (
+        $teamPreset.mode -eq 'team' -and $teamPreset.profile -eq 'balanced'
+    ) 'Independent medium-risk workstreams should resolve to team/balanced.'
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Resolve-OrchestrationPreset.ps1') `
+            -Mode team -IndependentWorkstreams 2 -NeedsRecovery | Out-Null
+    } 'team conflicts with durable requirements' (
+        'Explicit team mode must not carry workflow-only recovery.'
+    )
+
+    $workflowPreset = & (
+        Join-Path $scriptRoot 'Resolve-OrchestrationPreset.ps1'
+    ) -NeedsRecovery -RuntimeWorkerCapacity 3 | ConvertFrom-Json
+    Assert-True ($workflowPreset.mode -eq 'workflow') (
+        'Recovery should resolve to workflow.'
+    )
+    Assert-True (
+        $workflowPreset.limits.max_concurrent_nodes -eq 3 -and
+        $workflowPreset.limits.persistent_active_limit -eq 1 -and
+        $workflowPreset.limits.transient_reserved_slots -eq 2
+    ) 'Runtime capacity should clamp the 4+2 target without hiding transient reserve.'
+
+    $modelIds = @('gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra')
+    $economyModel = & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+        -Capability economy -AvailableModelIds $modelIds | ConvertFrom-Json
+    Assert-True (
+        $economyModel.model -eq 'gpt-5.6-luna' -and
+        $economyModel.effort -eq 'medium'
+    ) 'Economy should resolve to Luna medium.'
+    $standardModel = & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+        -Capability standard -AvailableModelIds $modelIds | ConvertFrom-Json
+    Assert-True ($standardModel.model -eq 'gpt-5.6-sol') (
+        'Standard judgment should resolve to Sol, not Terra.'
+    )
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+            -Capability standard -RequestedModel 'gpt-5.6-terra' `
+            -AvailableModelIds $modelIds | Out-Null
+    } 'Terra requires an explicit request' (
+        'Terra must never enter routing without user evidence.'
+    )
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+            -Capability standard -RequestedModel 'gpt-5.6-terra' `
+            -AllowExperimentalTerra -AvailableModelIds $modelIds | Out-Null
+    } 'user: authorization evidence' (
+        'A Terra switch alone must not self-authorize the experimental model.'
+    )
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+            -Capability ultra -AvailableModelIds $modelIds | Out-Null
+    } 'user: confirmation evidence' (
+        'Ultra must require explicit per-node confirmation.'
+    )
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+            -Capability economy -RequestedModel 'gpt-5.6-sol' `
+            -AvailableModelIds $modelIds | Out-Null
+    } 'requires explicit user confirmation' (
+        'An initial economy-to-Sol override must require confirmation.'
+    )
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+            -Capability strong -PriorRunDirectory $testRoot `
+            -AvailableModelIds $modelIds | Out-Null
+    } 'must be provided together' (
+        'Prior retry state must identify both its run and node.'
+    )
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+            -Capability economy -RequestedModel 'gpt-5.6-sol' `
+            -UserConfirmedEscalation `
+            -AuthorizationEvidence 'policy:path:missing-policy.md' `
+            -WorkspaceRoot $skillRoot -AvailableModelIds $modelIds | Out-Null
+    } 'existing safe project-relative file' (
+        'A policy pointer must identify a real project file.'
+    )
+    $confirmedTerra = & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+        -Capability standard -RequestedModel 'gpt-5.6-terra' `
+        -AllowExperimentalTerra `
+        -AuthorizationEvidence 'user:explicit-terra-test-request' `
+        -AvailableModelIds $modelIds | ConvertFrom-Json
+    Assert-True (
+        $confirmedTerra.model -eq 'gpt-5.6-terra' -and
+        $confirmedTerra.authorization -eq 'experimental-user-request'
+    ) 'Explicit user evidence should permit an experimental Terra request.'
+
+    $lunaRetryPlan = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $lunaRetryPlan.run_id = 'luna-retry-routing-001'
+    $lunaRetryPlan.nodes[0].capability = 'economy'
+    $lunaRetryPlan.nodes[0].model = 'gpt-5.6-luna'
+    $lunaRetryPlan.nodes[0].model_reason = (
+        'The first attempt is bounded mechanical extraction.'
+    )
+    $lunaRetryPlan.nodes[0].effort = 'medium'
+    $lunaRetryPlanPath = Join-Path $testRoot 'luna-retry-routing-plan.json'
+    $lunaRetryPlan | ConvertTo-Json -Depth 100 |
+        Set-Content -LiteralPath $lunaRetryPlanPath
+    $lunaRetryRun = Join-Path $testRoot 'luna-retry-routing-run'
+    & (Join-Path $scriptRoot 'New-OrchestrationRun.ps1') `
+        -PlanPath $lunaRetryPlanPath -RunDirectory $lunaRetryRun `
+        -WorkspaceRoot $testRoot | Out-Null
+    foreach ($status in @(
+        'launch_reserved', 'materializing', 'materialized', 'running'
+    )) {
+        $threadId = if ($status -eq 'materialized') {
+            'luna-routing-attempt'
+        } else { $null }
+        $modelId = if ($status -eq 'materialized') {
+            'gpt-5.6-luna'
+        } else { $null }
+        & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+            -RunDirectory $lunaRetryRun -NodeId 'draft' -Status $status `
+            -Message "luna routing $status" -ThreadId $threadId `
+            -ModelId $modelId `
+            -IdempotencyKey "luna-routing-$status" | Out-Null
+    }
+    & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+        -RunDirectory $lunaRetryRun -NodeId 'draft' -Status 'failed' `
+        -Message 'Luna attempt lacked the required reasoning capability.' `
+        -ErrorClass 'runtime_transient' `
+        -IdempotencyKey 'luna-routing-failed' | Out-Null
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+            -Capability strong -PriorRunDirectory $lunaRetryRun `
+            -PriorNodeId 'draft' -AvailableModelIds $modelIds | Out-Null
+    } 'requires explicit user confirmation' (
+        'A journal-derived Luna-to-Sol escalation must require confirmation.'
+    )
+    $confirmedRetry = & (Join-Path $scriptRoot 'Resolve-WorkerModel.ps1') `
+        -Capability strong -PriorRunDirectory $lunaRetryRun `
+        -PriorNodeId 'draft' `
+        -UserConfirmedEscalation `
+        -AuthorizationEvidence 'user:explicit-escalation-test-request' `
+        -AvailableModelIds $modelIds | ConvertFrom-Json
+    Assert-True (
+        $confirmedRetry.model -eq 'gpt-5.6-sol' -and
+        $confirmedRetry.prior_model -eq 'gpt-5.6-luna' -and
+        $confirmedRetry.prior_effort -eq 'medium' -and
+        $confirmedRetry.authorization -eq 'escalation-confirmed'
+    ) 'Immutable retry state plus user evidence should permit escalation.'
+
+    $capacityWithTransientReserve = & (
+        Join-Path $scriptRoot 'Resolve-WorkerCapacity.ps1'
+    ) -ActivePersistentWorkers 4 -RequestedKind transient | ConvertFrom-Json
+    Assert-True $capacityWithTransientReserve.allowed (
+        'Four active persistent Workers should still leave a transient slot.'
+    )
+    $persistentFifth = & (
+        Join-Path $scriptRoot 'Resolve-WorkerCapacity.ps1'
+    ) -ActivePersistentWorkers 4 -RequestedKind persistent | ConvertFrom-Json
+    Assert-True (
+        -not $persistentFifth.allowed -and
+        $persistentFifth.reason -eq 'persistent-active-limit-exhausted'
+    ) 'A fifth persistent Worker should be rejected.'
+    $orderIndependentCapacity = & (
+        Join-Path $scriptRoot 'Resolve-WorkerCapacity.ps1'
+    ) -ActivePersistentWorkers 2 -ActiveTransientWorkers 2 `
+        -RequestedKind persistent | ConvertFrom-Json
+    Assert-True $orderIndependentCapacity.allowed (
+        'Persistent admission must not depend on whether transient Workers started first.'
+    )
+    $clampedReserve = & (
+        Join-Path $scriptRoot 'Resolve-WorkerCapacity.ps1'
+    ) -RuntimeWorkerCapacity 3 -ActivePersistentWorkers 1 `
+        -RequestedKind persistent | ConvertFrom-Json
+    Assert-True (
+        -not $clampedReserve.allowed -and
+        $clampedReserve.reason -eq 'transient-reserve-protected'
+    ) 'Runtime clamping should still protect transient capacity.'
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Resolve-WorkerCapacity.ps1') `
+            -RuntimeWorkerCapacity 3 -ActivePersistentWorkers 1 `
+            -RequestedKind persistent -BorrowTransientReserve | Out-Null
+    } 'requires explicit user confirmation' (
+        'Borrowing a transient reserve must require user confirmation.'
+    )
+    $confirmedBorrow = & (
+        Join-Path $scriptRoot 'Resolve-WorkerCapacity.ps1'
+    ) -RuntimeWorkerCapacity 3 -ActivePersistentWorkers 1 `
+        -RequestedKind persistent -BorrowTransientReserve `
+        -UserConfirmedBorrow | ConvertFrom-Json
+    Assert-True $confirmedBorrow.allowed (
+        'Explicit user confirmation should permit bounded reserve borrowing.'
     )
     $efficiency = & (Join-Path $scriptRoot 'Test-OrchestrationEfficiency.ps1') `
         -PlanPath $examplePath | ConvertFrom-Json
@@ -304,6 +536,23 @@ try {
     & (Join-Path $scriptRoot 'New-OrchestrationRun.ps1') `
         -PlanPath $examplePath -RunDirectory $waveBindingRun `
         -WorkspaceRoot $testRoot | Out-Null
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+            -RunDirectory $waveBindingRun -NodeId 'draft' `
+            -Status 'materialized' -Message 'missing actual model' `
+            -IdempotencyKey 'missing-actual-model' | Out-Null
+    } 'requires the actual ModelId' (
+        'Materialization must report the actual model.'
+    )
+    Assert-ThrowsLike {
+        & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
+            -RunDirectory $waveBindingRun -NodeId 'draft' `
+            -Status 'materialized' -Message 'model silently changed' `
+            -ModelId 'gpt-5.6-luna' `
+            -IdempotencyKey 'mismatched-actual-model' | Out-Null
+    } 'differs from planned model' (
+        'Materialization must reject an unapproved model substitution.'
+    )
     & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
         -RunDirectory $waveBindingRun -NodeId 'draft' `
         -Status 'launch_reserved' -Message 'attempt forged wave' -Wave 99 `
@@ -349,6 +598,9 @@ try {
         'running', 'completed', 'validated'
     )) {
         $threadId = if ($status -eq 'materialized') { 'test-thread-draft' } else { $null }
+        $modelId = if ($status -eq 'materialized') {
+            'gpt-5.6-sol'
+        } else { $null }
         $artifact = if ($status -eq 'completed') {
             'artifacts/draft/output.md'
         } else { $null }
@@ -361,7 +613,8 @@ try {
         $usageSource = if ($status -eq 'completed') { 'estimate' } else { 'none' }
         & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
             -RunDirectory $runDirectory -NodeId 'draft' -Status $status `
-            -Message "draft $status" -ThreadId $threadId -Artifact $artifact `
+            -Message "draft $status" -ThreadId $threadId -ModelId $modelId `
+            -Artifact $artifact `
             -Evidence $evidence -InputTokensDelta $inputTokensDelta `
             -OutputTokensDelta $outputTokensDelta `
             -CoordinationTokensDelta $coordinationTokensDelta `
@@ -377,6 +630,10 @@ try {
     Assert-True ($draftState.thread_id -eq 'test-thread-draft') (
         'Reducer should retain the last non-null thread id.'
     )
+    Assert-True (
+        $draftState.planned_model -eq 'gpt-5.6-sol' -and
+        $draftState.actual_model -eq 'gpt-5.6-sol'
+    ) 'Reducer should retain planned and actual model identity.'
     Assert-True ($draftState.artifact -eq 'artifacts/draft/output.md') (
         'Reducer should retain the last non-null artifact.'
     )
@@ -531,9 +788,12 @@ try {
         $threadId = if ($status -eq 'materialized') {
             'delta-failed-thread'
         } else { $null }
+        $modelId = if ($status -eq 'materialized') {
+            'gpt-5.6-sol'
+        } else { $null }
         & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
             -RunDirectory $deltaRun -NodeId 'draft' -Status $status `
-            -Message "delta retry $status" -ThreadId $threadId `
+            -Message "delta retry $status" -ThreadId $threadId -ModelId $modelId `
             -IdempotencyKey "delta-retry-1-$status" | Out-Null
     }
     & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
@@ -704,9 +964,99 @@ try {
 
     $excessWorkerLimit = Get-Content -LiteralPath $examplePath -Raw |
         ConvertFrom-Json -AsHashtable -Depth 100
-    $excessWorkerLimit.limits.max_total_agent_nodes = 5
+    $excessWorkerLimit.limits.max_total_agent_nodes = 9
     Assert-InvalidPlan $excessWorkerLimit 'excess-worker-limit' (
-        'max_total_agent_nodes must be between 1 and 4'
+        'max_total_agent_nodes must be between 1 and 8'
+    )
+
+    $unresolvedAuto = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $unresolvedAuto.mode = 'auto'
+    Assert-InvalidPlan $unresolvedAuto 'unresolved-auto-mode' (
+        'mode auto must be resolved'
+    )
+
+    $oversizedQuick = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $oversizedQuick.mode = 'quick'
+    Assert-InvalidPlan $oversizedQuick 'oversized-quick-mode' (
+        'quick mode allows at most one agent node'
+    )
+
+    $dependentTeam = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $dependentTeam.mode = 'team'
+    Assert-InvalidPlan $dependentTeam 'dependent-team-mode' (
+        'team mode requires independent agent workstreams'
+    )
+
+    $multiWriterTeam = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $multiWriterTeam.mode = 'team'
+    $multiWriterTeam.nodes[1].depends_on = @()
+    $multiWriterTeam.nodes[1].context.inputs = @(
+        'source:independent-security-advisory'
+    )
+    $multiWriterTeam.nodes[1].read_only = $false
+    $multiWriterTeam.nodes[1].write_scope = @('artifacts/review')
+    Assert-InvalidPlan $multiWriterTeam 'multi-writer-team-mode' (
+        'team mode cannot carry workflow-only'
+    )
+
+    $emptyWorkflow = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $emptyWorkflow.nodes[0].topology = 'native-subagent'
+    $emptyWorkflow.nodes[1].depends_on = @()
+    $emptyWorkflow.nodes[1].context.inputs = @(
+        'source:independent-security-advisory'
+    )
+    Assert-InvalidPlan $emptyWorkflow 'workflow-without-durable-reason' (
+        'workflow mode requires recovery'
+    )
+
+    $profileMismatch = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $profileMismatch.efficiency.profile = 'balanced'
+    Assert-InvalidPlan $profileMismatch 'profile-review-mismatch' (
+        "requires review_strategy 'sampled'"
+    )
+
+    $unauthorizedTerra = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $unauthorizedTerra.nodes[0].model = 'gpt-5.6-terra'
+    Assert-InvalidPlan $unauthorizedTerra 'unauthorized-terra' (
+        'experimental-user-request authorization'
+    )
+
+    $selfAuthorizedTerra = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $selfAuthorizedTerra.nodes[0].model = 'gpt-5.6-terra'
+    $selfAuthorizedTerra.nodes[0].model_authorization =
+        'experimental-user-request'
+    Assert-InvalidPlan $selfAuthorizedTerra 'self-authorized-terra' (
+        'model authorization requires user: evidence'
+    )
+
+    $unconfirmedEconomySol = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $unconfirmedEconomySol.nodes[0].capability = 'economy'
+    Assert-InvalidPlan $unconfirmedEconomySol 'unconfirmed-economy-sol' (
+        'requires confirmed escalation'
+    )
+
+    $selfAuthorizedEconomySol = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $selfAuthorizedEconomySol.nodes[0].capability = 'economy'
+    $selfAuthorizedEconomySol.nodes[0].model_authorization = 'user-confirmed'
+    Assert-InvalidPlan $selfAuthorizedEconomySol 'self-authorized-economy-sol' (
+        'model authorization requires user: evidence'
+    )
+
+    $missingResolvedModel = Get-Content -LiteralPath $examplePath -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    $missingResolvedModel.nodes[0].Remove('model')
+    Assert-InvalidPlan $missingResolvedModel 'missing-resolved-model' (
+        'requires non-empty model'
     )
 
     $overlappingContext = Get-Content -LiteralPath $examplePath -Raw |
@@ -840,6 +1190,9 @@ try {
     $economyUltra.nodes[1].effort = 'ultra'
     $economyUltra.nodes[1].ultra_reason = 'The user explicitly requested it.'
     $economyUltra.nodes[1].ultra_authorization = 'user-requested'
+    $economyUltra.nodes[1].model_authorization = 'user-confirmed'
+    $economyUltra.nodes[1].model_authorization_evidence =
+        'user:explicit-ultra-test-request'
     Assert-InvalidPlan $economyUltra 'economy-ultra' 'Lean profile forbids Ultra'
 
     $overlappingWriters = Get-Content -LiteralPath $examplePath -Raw |
@@ -987,6 +1340,7 @@ try {
         & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
             -RunDirectory $runDirectory -NodeId 'review' -Status 'materialized' `
             -Message 'reuse draft thread' -ThreadId 'test-thread-draft' `
+            -ModelId 'gpt-5.6-sol' `
             -IdempotencyKey 'review-reused-thread' | Out-Null
     }
     catch {
@@ -995,6 +1349,9 @@ try {
     Assert-True $freshReuseCaught 'Fresh nodes must not reuse another node thread.'
     foreach ($status in @('materialized', 'running', 'completed', 'validated')) {
         $threadId = if ($status -eq 'materialized') { 'test-thread-review' } else { $null }
+        $modelId = if ($status -eq 'materialized') {
+            'gpt-5.6-sol'
+        } else { $null }
         $evidence = if ($status -eq 'completed') {
             @('observation:Review contains reproducible failure scenarios.')
         } else { @() }
@@ -1004,7 +1361,8 @@ try {
         $usageSource = if ($status -eq 'completed') { 'estimate' } else { 'none' }
         & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
             -RunDirectory $runDirectory -NodeId 'review' -Status $status `
-            -Message "review $status" -ThreadId $threadId -Evidence $evidence `
+            -Message "review $status" -ThreadId $threadId -ModelId $modelId `
+            -Evidence $evidence `
             -InputTokensDelta $inputTokensDelta `
             -OutputTokensDelta $outputTokensDelta `
             -CoordinationTokensDelta $coordinationTokensDelta `
@@ -1165,9 +1523,13 @@ try {
         -WorkspaceRoot $testRoot | Out-Null
     foreach ($status in @('launch_reserved', 'materializing', 'materialized', 'running')) {
         $threadId = if ($status -eq 'materialized') { 'question-thread' } else { $null }
+        $modelId = if ($status -eq 'materialized') {
+            'gpt-5.6-sol'
+        } else { $null }
         & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
             -RunDirectory $questionRun -NodeId 'draft' -Status $status `
             -Message "question test $status" -ThreadId $threadId `
+            -ModelId $modelId `
             -IdempotencyKey "question-$status" | Out-Null
     }
     $questionLimitCaught = $false
@@ -1245,6 +1607,7 @@ try {
         & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
             -RunDirectory $reuseRun -NodeId 'draft' -Status 'materialized' `
             -Message 'wrong prior thread' -ThreadId 'different-thread' `
+            -ModelId 'gpt-5.6-sol' `
             -IdempotencyKey 'reuse-wrong-thread' | Out-Null
     }
     catch {
@@ -1301,9 +1664,13 @@ try {
         -WorkspaceRoot $testRoot | Out-Null
     foreach ($status in @('launch_reserved', 'materializing', 'materialized', 'running')) {
         $threadId = if ($status -eq 'materialized') { 'first-attempt-thread' } else { $null }
+        $modelId = if ($status -eq 'materialized') {
+            'gpt-5.6-sol'
+        } else { $null }
         & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
             -RunDirectory $freshRetryRun -NodeId 'draft' -Status $status `
             -Message "fresh retry $status" -ThreadId $threadId `
+            -ModelId $modelId `
             -IdempotencyKey "fresh-retry-1-$status" | Out-Null
     }
     & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
@@ -1321,6 +1688,7 @@ try {
         & (Join-Path $scriptRoot 'Add-OrchestrationEvent.ps1') `
             -RunDirectory $freshRetryRun -NodeId 'draft' -Status 'materialized' `
             -Message 'reuse failed attempt thread' -ThreadId 'first-attempt-thread' `
+            -ModelId 'gpt-5.6-sol' `
             -IdempotencyKey 'fresh-retry-reused-thread' | Out-Null
     }
     catch {

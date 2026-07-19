@@ -62,14 +62,15 @@ pwsh -File scripts/New-RoleActivationPreview.ps1 `
   -PlanPath <plan.json> -NodeId <agent-node-id>
 ```
 
-After materialization, report the role, actual Worker or thread ID, status, and
-any deviation from the preview. Repeat permissions or dependencies only when
-they changed. A failed health probe is not a created Worker and does not
-consume a seat. Across one root task, the controller must count direct and
-durable Workers together and never materialize more than four, including later
-waves and retries; platform concurrency may be lower. The deterministic plan
-validator enforces four per durable run, not across separate runs. If recovery
-cannot establish the root-task count, launch no new Worker until reconciled.
+After materialization, report the role, actual Worker or thread ID, actual
+model, status, and any deviation from the preview. Repeat permissions or
+dependencies only when they changed. A failed health probe is not a created
+Worker and does not consume a seat. Target at most six active Workers: four
+active background threads plus two reserved native-subagent slots. Clamp this
+to the platform's actual capacity. Idle registered roles or threads do not
+consume active slots. Keep a separate cumulative materialization ceiling for
+later waves and retries. If recovery cannot reconcile the root-task count,
+launch no new Worker.
 
 Use industry role packs only when a professional responsibility would improve
 the result. First list the compact catalog, then load only the selected
@@ -134,6 +135,17 @@ context-overlap, progressive-dispatch, or delta-retry rules to force a team.
   handoff and verified hash. Otherwise use a fresh session.
 - Use only execution tools actually available. If materialization or read-back
   fails, stop dispatch and continue safely in the main agent.
+
+Resolve `auto`, capacity, and verification profile with
+`Resolve-OrchestrationPreset.ps1`. Resolve the dispatch model with
+`Resolve-WorkerModel.ps1`. Before every launch, use
+`Resolve-WorkerCapacity.ps1` with observed active persistent and transient
+counts; registered but idle agents do not count. Automatically use Luna only
+for bounded mechanical work and Sol for ordinary judgment, implementation,
+writing, or review. Treat Terra as explicit and experimental. Before any model
+or effort escalation, explain the change and obtain user confirmation unless a
+bounded policy already authorizes it. Ultra always needs explicit per-node
+confirmation.
 
 ## Execute progressively
 

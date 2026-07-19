@@ -57,6 +57,7 @@ $created = [ordered]@{
     status = 'planned'
     message = 'Validated orchestration run created.'
     thread_id = $null
+    model_id = $null
     artifact = $null
     topology = $null
     capability = $null

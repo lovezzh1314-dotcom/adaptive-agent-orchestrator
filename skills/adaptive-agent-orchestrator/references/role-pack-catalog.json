@@ -23,6 +23,12 @@
       "display_name": "Public Equity Research",
       "file": "roles-equity-research.json",
       "selection_rule": "Keep facts, valuation, catalysts, and thesis-risk review separate only when each has independent evidence."
+    },
+    {
+      "id": "research-evidence",
+      "display_name": "Cross-domain Research Evidence",
+      "file": "roles-research-evidence.json",
+      "selection_rule": "Activate only for a reusable evidence base requested by the user or shared by at least two downstream workstreams."
     }
   ]
 }

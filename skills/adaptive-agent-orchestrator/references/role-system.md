@@ -80,15 +80,17 @@ The validator checks only the provenance class. The main agent must verify the
 cited message or policy in current context before launch; a plan string is not
 proof of authority.
 
-After materialization, report actual ID, status, permission scope,
+After materialization, report actual ID, model, status, permission scope,
 dependencies, and deviations from the preview. In the no-deviation case,
-compress this to role, ID, status, and `no deviation`; do not restate the full
-preview. Do not describe a failed materialization or unreadable thread as a
-Worker. The controller counts direct, durable, later-wave, and retry Workers
-against a hard maximum of four per root task. The plan validator enforces the
-same ceiling within one durable run; it has no cross-run ledger. On recovery,
-unknown root-task count means no new Worker until the main agent reconciles
-visible threads and run state. Four is a ceiling, never a target.
+compress this to role, ID, model, status, and `no deviation`; do not restate
+the full preview. Do not describe a failed materialization or unreadable thread
+as a Worker. Target six active Workers when the runtime supports it: no more
+than four active persistent Workers and two protected transient-subagent
+slots. Registered but idle roles or threads do not count. A separate
+cumulative materialization ceiling covers direct, durable, later-wave, and
+retry Workers. The plan validator and journal enforce one durable run; before
+cross-run or direct launches, reconcile visible active Workers with
+`Resolve-WorkerCapacity.ps1`.
 
 ## Built-in generic roles
 
@@ -103,6 +105,7 @@ Use these as defaults, then specialize with domain context:
 | `recovery-auditor` | Reconcile journal, threads, artifacts, and unknown states | read-only |
 | `integrator` | Compare evidence and prepare adoption decisions for the main agent | proposal-only |
 | `domain-specialist` | Apply a named professional discipline without expanding scope | proposal-only |
+| `research-evidence-curator` | Build a reusable, cross-checked source base for downstream workstreams | read-only |
 
 The main agent remains the actual integrator and final decision owner even when
 an `integrator` worker prepares a synthesis.
@@ -128,6 +131,16 @@ Available packs:
 
 Do not imitate famous practitioners, run automatic role debates, or inject the
 whole catalog into worker context.
+
+## Research evidence role
+
+Activate `research-evidence-curator` only when the user explicitly requests a
+reusable source base or the same evidence set will serve at least two
+downstream workstreams or artifacts. Keep one-off fact lookup in the main
+agent. The role returns a source registry, terminology boundaries, conflicts,
+freshness, unresolved questions, and a compact evidence handoff. Store these
+as project artifacts; do not preserve knowledge by keeping one thread alive
+indefinitely. The role is read-only and may not edit this Skill.
 
 ## Manuscript co-author pattern
 

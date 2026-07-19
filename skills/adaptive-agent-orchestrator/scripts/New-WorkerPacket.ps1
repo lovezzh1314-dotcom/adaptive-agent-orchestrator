@@ -226,6 +226,7 @@ Node ID: $($node.id)
 Dependencies: $dependencies
 Workflow: $($node.workflow)
 Capability class: $($node.capability)
+Resolved model: $($node.model)
 Effort class: $($node.effort)
 
 ## Context efficiency

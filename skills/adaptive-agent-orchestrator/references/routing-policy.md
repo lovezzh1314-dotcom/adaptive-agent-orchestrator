@@ -23,7 +23,7 @@ Avoid live DAG rewriting, reviewer ensembles, repeated dynamic role creation,
 and model-facing full journal replay. Each adds another reasoning loop without
 a default economic case.
 
-## Efficiency before topology
+## Modes and verification profiles
 
 Do not create a worker until
 [context-efficiency.md](context-efficiency.md) clears the plan. Do not predict
@@ -31,9 +31,20 @@ a task-total Token budget. Reduce total use by limiting duplicated context,
 unnecessary workers, repeated reviews, full-packet retries, and transcript
 replay.
 
-Default to `lean`. Use `balanced` only when a measurable quality or latency
-benefit justifies more verification. Use `quality` only when the user
-explicitly prioritizes quality or a high-risk gate requires it.
+Resolve `auto` once with `Resolve-OrchestrationPreset.ps1`; never create a
+Router Agent. `quick` keeps work in the main agent or one temporary read-only
+Worker. `team` is for at least two independent workstreams. `workflow` is for
+recovery, stage dependencies, multiple writers, or an approval gate.
+
+Profiles control verification, not team size:
+
+| Profile | Review strategy |
+| --- | --- |
+| `lean` | `risk-only` |
+| `balanced` | `sampled` |
+| `quality` | `always`, meaning one independent critical quality gate |
+
+Do not expose a mode-by-profile configuration matrix to ordinary users.
 
 ## Topology selection
 
@@ -74,8 +85,28 @@ Use capability classes in plans so the skill remains portable:
 | `strong` | architecture, ambiguous debugging, adversarial review |
 | `ultra` | one exceptional escalation or final high-risk adjudication |
 
-Resolve a class to a currently available model only at dispatch time. Never
-invent an unavailable model ID.
+Resolve a class to a currently available model with
+`Resolve-WorkerModel.ps1`. The automatic pool is deliberately small:
+
+| Class | Default |
+| --- | --- |
+| `economy` | `gpt-5.6-luna` / `medium` |
+| `standard` | `gpt-5.6-sol` / `medium` |
+| `strong` | `gpt-5.6-sol` / `high` |
+| `ultra` | `gpt-5.6-sol` / `ultra` |
+
+Terra is experimental. Use it only after an explicit user model request; do
+not select it automatically or use it as a fallback. Never invent an
+unavailable model ID. A Luna/Terra-to-Sol escalation, an effort increase, or
+an unavailable-model substitution requires user confirmation unless the user
+granted a bounded automatic-escalation policy. Ultra always requires explicit
+per-node confirmation. Pass the confirming `user:` message pointer or verified
+`policy:path:` file into the resolver; a boolean switch cannot self-authorize
+an upgrade. A `user:` pointer remains a controller-checked audit reference,
+not cryptographic proof. A `policy:path:` pointer must resolve to an existing,
+safe project-relative file. Retry resolution reads the prior failed node's
+actual model from its validated immutable journal and its effort from the
+sealed plan; callers cannot supply either value directly.
 
 `ultra` requires all of the following:
 
@@ -93,8 +124,10 @@ Ultra is a reasoning allocation, not permission to create more agents.
 Use stricter project instructions when present.
 
 ```text
-max_concurrent_nodes: 2
-max_total_agent_nodes: 4
+max_concurrent_nodes: 6
+max_total_agent_nodes: 8
+persistent_active_limit: 4
+transient_reserved_slots: 2
 max_new_nodes_per_wave: 2
 max_attempts_per_node: 2
 retry_reserve: 1
@@ -116,11 +149,19 @@ must own disjoint context or independently reduce a material risk. In lean
 mode, do not use speculative races and do not allocate a reviewer to merely
 summarize or approve another worker.
 
-The controller applies the four-Worker ceiling across the root task, including
-direct, durable, later-wave, and retry Workers. The deterministic journal
-enforces it within one run; separate runs do not share a ledger. A
-materialization that fails its immediate health probe is not counted as a
-Worker.
+The six active slots are a target, not a platform promise. Clamp
+`max_concurrent_nodes` to the runtime child capacity. At most four active
+background-thread Workers may run, leaving two slots for native subagents.
+Registered but idle roles or threads do not consume active slots. A persistent
+Worker may borrow a transient reserve only after explicit user approval.
+Before any launch, call `Resolve-WorkerCapacity.ps1` with the observed active
+persistent and transient counts. This is the cross-run admission check; a
+single durable journal can enforce only its own run.
+
+`max_total_agent_nodes` is a separate cumulative materialization ceiling,
+including direct, durable, later-wave, and retry Workers. The deterministic
+journal enforces it within one run; separate runs do not share a ledger. A
+materialization that fails its immediate health probe is not counted.
 
 ## Escalation ladder
 

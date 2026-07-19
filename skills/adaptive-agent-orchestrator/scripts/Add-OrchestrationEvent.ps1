@@ -20,6 +20,7 @@ param(
     [string] $IdempotencyKey,
 
     [string] $ThreadId,
+    [string] $ModelId,
     [string] $Artifact,
     [string] $Decision,
     [string] $HumanActor,
@@ -73,6 +74,22 @@ if ($Status -in @('failed', 'unknown') -and [string]::IsNullOrWhiteSpace($ErrorC
 if ($Status -notin @('failed', 'unknown') -and -not [string]::IsNullOrWhiteSpace($ErrorClass)) {
     throw "ErrorClass is only valid for failed or unknown status."
 }
+if ($ModelId -and $ModelId -notin @(
+    'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra'
+)) {
+    throw "Unsupported actual model '$ModelId'."
+}
+if ($node.kind -eq 'agent' -and $Status -eq 'materialized') {
+    if ([string]::IsNullOrWhiteSpace($ModelId)) {
+        throw 'Agent materialization requires the actual ModelId.'
+    }
+    if ($ModelId -ne [string]$node.model) {
+        throw (
+            "Actual model '$ModelId' differs from planned model " +
+            "'$($node.model)'; obtain confirmation and create a revised plan."
+        )
+    }
+}
 $usageDelta = $InputTokensDelta + $OutputTokensDelta
 if ($CoordinationTokensDelta -gt $usageDelta) {
     throw 'Coordination Token delta must be a subset of input plus output Tokens.'
@@ -97,6 +114,7 @@ $requestFingerprint = Get-TextSha256 (
         status = $Status
         message = $Message
         thread_id = if ($ThreadId) { $ThreadId } else { $null }
+        model_id = if ($ModelId) { $ModelId } else { $null }
         artifact = if ($Artifact) { $Artifact } else { $null }
         decision = if ($Decision) { $Decision } else { $null }
         human_actor = if ($HumanActor) { $HumanActor } else { $null }
@@ -311,11 +329,27 @@ try {
         $activeStates = @(
             'launch_reserved', 'materializing', 'materialized', 'running', 'needs_input'
         )
-        $activeCount = @(
-            $latestByNode.Values | Where-Object { $_ -in $activeStates }
-        ).Count
+        $activeNodeIds = @(
+            $latestByNode.GetEnumerator() | Where-Object {
+                $_.Value -in $activeStates
+            } | ForEach-Object { $_.Key }
+        )
+        $activeCount = $activeNodeIds.Count
         if ($activeCount -ge [int]$plan.limits.max_concurrent_nodes) {
             throw 'Concurrent agent slots are exhausted.'
+        }
+        if ($node.topology -eq 'background-thread') {
+            $activePersistentCount = @(
+                $plan.nodes | Where-Object {
+                    $_.kind -eq 'agent' -and
+                    $_.topology -eq 'background-thread' -and
+                    $_.id -in $activeNodeIds
+                }
+            ).Count
+            if ($activePersistentCount -ge
+                [int]$plan.limits.persistent_active_limit) {
+                throw 'Persistent active Worker limit is exhausted.'
+            }
         }
         $waveCount = @(
             $launchEvents | Where-Object { [int]$_.wave -eq $effectiveWave }
@@ -356,6 +390,7 @@ try {
         status = $Status
         message = $Message
         thread_id = if ($ThreadId) { $ThreadId } else { $null }
+        model_id = if ($ModelId) { $ModelId } else { $null }
         artifact = if ($Artifact) { $Artifact } else { $null }
         topology = if ($kind -eq 'agent') { $node.topology } else { $kind }
         capability = if ($kind -in @('agent', 'main')) { $node.capability } else { $null }

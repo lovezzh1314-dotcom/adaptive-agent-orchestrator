@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.0 - 2026-07-19
+
+First stable-channel release. Mode, model-routing, and active-capacity rules
+advance the plan policy to `0.5.0`.
+
+- Resolve `auto` deterministically into `quick`, `team`, or `workflow`; reject
+  contradictory durable plans.
+- Give `lean`, `balanced`, and `quality` exact review strategies without
+  exposing a user-facing mode matrix.
+- Route bounded mechanical work to Luna and ordinary judgment or complex work
+  to Sol. Keep Terra explicit and experimental.
+- Require confirmation for model/effort escalation and per-node Ultra use.
+- Target six active Workers while protecting two transient-subagent slots from
+  four active persistent Workers; clamp to actual runtime capacity.
+- Add an on-demand cross-domain research evidence curator and reusable source
+  registry contract.
+- Record planned and actual model identity in previews, packets, and durable
+  run state.
+
 ## 0.4.2-beta.1 - 2026-07-18
 
 Role-activation release. Plan policy version advances to `0.4.2`.

@@ -41,6 +41,13 @@ $responsibilities = @($role.responsibilities) -join '; '
 $nonGoals = @($role.non_goals) -join '; '
 $deliverables = @($role.deliverables) -join '; '
 $evidence = @($role.evidence_rules) -join '; '
+$modelAuthorizationEvidence = if (
+    $null -ne $node.PSObject.Properties['model_authorization_evidence']
+) {
+    [string]$node.model_authorization_evidence
+} else {
+    'not-required'
+}
 
 $preview = @"
 ## Proposed Worker
@@ -55,6 +62,10 @@ $preview = @"
 - Inputs and context scope: $inputs
 - Excluded context: $excluded
 - Topology/session: $($node.topology) / $($node.context.session_policy)
+- Planned model/effort: $($node.model) / $($node.effort)
+- Model reason: $($node.model_reason)
+- Model authorization: $($node.model_authorization)
+- Model authorization evidence: $modelAuthorizationEvidence
 - Deliverables: $deliverables
 - Evidence rules: $evidence
 - Permissions and write scope: $permission

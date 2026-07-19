@@ -40,6 +40,9 @@ $nodeStates = foreach ($node in $plan.nodes) {
     $lastThread = $history | Where-Object {
         -not [string]::IsNullOrWhiteSpace([string]$_.thread_id)
     } | Select-Object -Last 1
+    $lastModel = $history | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([string]$_.model_id)
+    } | Select-Object -Last 1
     $lastArtifact = $history | Where-Object {
         -not [string]::IsNullOrWhiteSpace([string]$_.artifact)
     } | Select-Object -Last 1
@@ -62,6 +65,8 @@ $nodeStates = foreach ($node in $plan.nodes) {
         dependencies = @($node.depends_on)
         status = if ($latest) { $latest.status } else { 'planned' }
         thread_id = if ($lastThread) { $lastThread.thread_id } else { $null }
+        planned_model = if ($node.kind -eq 'agent') { $node.model } else { $null }
+        actual_model = if ($lastModel) { $lastModel.model_id } else { $null }
         artifact = if ($lastArtifact) { $lastArtifact.artifact } else { $null }
         attempts = $attempts
         latest_message = if ($latest) { $latest.message } else { $null }

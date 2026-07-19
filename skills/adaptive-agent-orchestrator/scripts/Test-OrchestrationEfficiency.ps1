@@ -60,6 +60,17 @@ if ([string]$policy.fallback -ne 'main-only') {
 if ([string]$policy.profile -eq 'lean' -and [double]$maxOverlap -gt 0.5) {
     throw 'Lean profile max_context_overlap_ratio cannot exceed 0.5.'
 }
+$expectedReviewStrategy = switch ([string]$policy.profile) {
+    'lean' { 'risk-only' }
+    'balanced' { 'sampled' }
+    'quality' { 'always' }
+}
+if ([string]$policy.review_strategy -ne $expectedReviewStrategy) {
+    throw (
+        "Profile '$($policy.profile)' requires review_strategy " +
+        "'$expectedReviewStrategy'."
+    )
+}
 
 $agentNodes = @($plan.nodes | Where-Object { $_.kind -eq 'agent' })
 $errors = [Collections.Generic.List[string]]::new()
@@ -143,6 +154,10 @@ if ([string]$policy.review_strategy -eq 'risk-only' -and
     [string]$plan.risk -eq 'low' -and
     @($agentNodes | Where-Object { $_.purpose -eq 'verification' }).Count -gt 0) {
     $errors.Add('Risk-only review may not create a reviewer for a low-risk task.')
+}
+if ([string]$policy.profile -eq 'quality' -and
+    @($agentNodes | Where-Object { $_.purpose -eq 'verification' }).Count -lt 1) {
+    $errors.Add('Quality profile requires one independent verification worker.')
 }
 
 $result = [ordered]@{

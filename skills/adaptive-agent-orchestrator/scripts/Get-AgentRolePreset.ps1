@@ -5,7 +5,8 @@ param(
         'supply-chain',
         'software-development',
         'creative-production',
-        'equity-research'
+        'equity-research',
+        'research-evidence'
     )]
     [string] $Domain,
 

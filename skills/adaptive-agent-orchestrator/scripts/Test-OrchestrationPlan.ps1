@@ -96,8 +96,8 @@ $plan = Get-Content -LiteralPath $resolvedPlan -Raw | ConvertFrom-Json -Depth 10
 if ((Get-PlanProperty $plan 'schema_version') -ne '1.0') {
     Add-PlanError "schema_version must be '1.0'."
 }
-if ((Get-PlanProperty $plan 'policy_version') -ne '0.4.2') {
-    Add-PlanError "policy_version must be '0.4.2'."
+if ((Get-PlanProperty $plan 'policy_version') -ne '0.5.0') {
+    Add-PlanError "policy_version must be '0.5.0'."
 }
 $null = Require-Text $plan 'run_id' 'Plan'
 $null = Require-Text $plan 'goal' 'Plan'
@@ -124,7 +124,9 @@ if ($null -eq $orchestrator) {
 $limits = Get-PlanProperty $plan 'limits'
 $limitRules = [ordered]@{
     max_concurrent_nodes = @(1, 6)
-    max_total_agent_nodes = @(1, 4)
+    max_total_agent_nodes = @(1, 8)
+    persistent_active_limit = @(0, 4)
+    transient_reserved_slots = @(0, 2)
     max_new_nodes_per_wave = @(1, 3)
     max_attempts_per_node = @(1, 2)
     retry_reserve = @(0, 2)
@@ -134,6 +136,15 @@ $limitRules = [ordered]@{
     max_graph_depth = @(1, 12)
     max_dynamic_nodes = @(0, 2)
     max_forks = @(0, 1)
+}
+$maxConcurrent = [int](Get-PlanProperty $limits 'max_concurrent_nodes')
+$persistentLimit = [int](Get-PlanProperty $limits 'persistent_active_limit')
+$transientReserve = [int](Get-PlanProperty $limits 'transient_reserved_slots')
+if ($persistentLimit + $transientReserve -gt $maxConcurrent) {
+    Add-PlanError (
+        'persistent_active_limit plus transient_reserved_slots cannot exceed ' +
+        'max_concurrent_nodes.'
+    )
 }
 foreach ($entry in $limitRules.GetEnumerator()) {
     $value = Get-PlanProperty $limits $entry.Key
@@ -270,6 +281,74 @@ foreach ($node in $nodes) {
         }
         if ($effort -notin @('low', 'medium', 'high', 'xhigh', 'max', 'ultra')) {
             Add-PlanError "Node '$id' has invalid effort '$effort'."
+        }
+        if ($kind -eq 'agent') {
+            $model = Require-Text $node 'model' "Agent node '$id'"
+            $modelReason = Require-Text $node 'model_reason' "Agent node '$id'"
+            $modelAuthorization = Get-PlanProperty $node 'model_authorization'
+            if ($model -notin @(
+                'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra'
+            )) {
+                Add-PlanError "Agent node '$id' has unsupported model '$model'."
+            }
+            if ($modelAuthorization -notin @(
+                'not-required', 'user-confirmed', 'policy-confirmed',
+                'experimental-user-request'
+            )) {
+                Add-PlanError (
+                    "Agent node '$id' has invalid model_authorization."
+                )
+            }
+            if ($model -eq 'gpt-5.6-terra' -and
+                $modelAuthorization -ne 'experimental-user-request') {
+                Add-PlanError (
+                    "Agent node '$id' Terra selection requires " +
+                    'experimental-user-request authorization.'
+                )
+            }
+            $modelEvidence = [string](Get-PlanProperty $node (
+                'model_authorization_evidence'
+            ))
+            if ($modelAuthorization -in @(
+                'user-confirmed', 'experimental-user-request'
+            ) -and $modelEvidence -notmatch '^user:.+') {
+                Add-PlanError (
+                    "Agent node '$id' model authorization requires " +
+                    'user: evidence.'
+                )
+            }
+            if ($modelAuthorization -eq 'policy-confirmed') {
+                if ($modelEvidence -notmatch '^policy:path:(.+)$') {
+                    Add-PlanError (
+                        "Agent node '$id' policy-confirmed model authorization " +
+                        'requires policy:path:<file> evidence.'
+                    )
+                } else {
+                    $modelPolicyPath = $Matches[1]
+                    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot) -or
+                        [IO.Path]::IsPathRooted($modelPolicyPath) -or
+                        ($modelPolicyPath -split '[\\/]' -contains '..') -or
+                        -not (Test-Path -LiteralPath (
+                            Join-Path $WorkspaceRoot $modelPolicyPath
+                        ) -PathType Leaf)) {
+                        Add-PlanError (
+                            "Agent node '$id' model authorization policy must " +
+                            'be an existing safe project-relative file.'
+                        )
+                    }
+                }
+            }
+            if ($capability -eq 'economy' -and
+                $model -eq 'gpt-5.6-sol' -and
+                $modelAuthorization -notin @('user-confirmed', 'policy-confirmed')) {
+                Add-PlanError (
+                    "Agent node '$id' economy-to-Sol selection requires " +
+                    'confirmed escalation.'
+                )
+            }
+            if ([string]::IsNullOrWhiteSpace($modelReason)) {
+                Add-PlanError "Agent node '$id' requires model_reason."
+            }
         }
         $readOnly = Get-PlanProperty $node 'read_only'
         if ($readOnly -isnot [bool]) {
@@ -462,6 +541,12 @@ foreach ($node in $nodes) {
             if ($authorization -ne 'user-requested') {
                 Add-PlanError "Ultra node '$id' requires user-requested ultra_authorization."
             }
+            if ((Get-PlanProperty $node 'model_authorization') -ne
+                'user-confirmed') {
+                Add-PlanError (
+                    "Ultra node '$id' requires user-confirmed model_authorization."
+                )
+            }
         }
         if ($workflow -eq 'loop') {
             $maxIterations = Get-PlanProperty $node 'max_iterations'
@@ -506,6 +591,97 @@ foreach ($node in $nodes) {
     }
     if ($kind -eq 'join' -and @($dependsOn).Count -lt 2) {
         Add-PlanError "Join node '$id' requires at least two dependencies."
+    }
+}
+
+$mode = Get-PlanProperty $plan 'mode'
+if ($mode -eq 'auto') {
+    Add-PlanError 'mode auto must be resolved before durable plan validation.'
+}
+if ($mode -eq 'quick') {
+    if ($agentNodes.Count -gt 1) {
+        Add-PlanError 'quick mode allows at most one agent node.'
+    }
+    if (@($nodes | Where-Object {
+        (Get-PlanProperty $_ 'kind') -eq 'human-gate'
+    }).Count -gt 0) {
+        Add-PlanError 'quick mode cannot contain a human gate.'
+    }
+    foreach ($quickNode in $agentNodes) {
+        if ((Get-PlanProperty $quickNode 'topology') -ne 'native-subagent' -or
+            (Get-PlanProperty (
+                Get-PlanProperty $quickNode 'context'
+            ) 'session_policy') -ne 'fresh' -or
+            (Get-PlanProperty (
+                Get-PlanProperty $quickNode 'context'
+            ) 'handoff_required') -ne $false) {
+            Add-PlanError (
+                'quick mode requires a fresh native subagent without handoff.'
+            )
+        }
+    }
+}
+if ($mode -eq 'team' -and $agentNodes.Count -lt 2) {
+    Add-PlanError 'team mode requires at least two agent nodes.'
+}
+if ($mode -eq 'team') {
+    $teamAgentIds = @($agentNodes | ForEach-Object {
+        [string](Get-PlanProperty $_ 'id')
+    })
+    if (@($agentNodes | Where-Object {
+        @((Get-PlanProperty $_ 'depends_on') | Where-Object {
+            $_ -in $teamAgentIds
+        }).Count -gt 0
+    }).Count -gt 0) {
+        Add-PlanError (
+            'team mode requires independent agent workstreams; use workflow ' +
+            'for agent-to-agent dependencies.'
+        )
+    }
+    if (@($agentNodes | Where-Object {
+        (Get-PlanProperty $_ 'read_only') -eq $false
+    }).Count -gt 1 -or
+        @($nodes | Where-Object {
+            (Get-PlanProperty $_ 'kind') -eq 'human-gate'
+        }).Count -gt 0 -or
+        @($agentNodes | Where-Object {
+            (Get-PlanProperty (
+                Get-PlanProperty $_ 'context'
+            ) 'handoff_required') -eq $true -or
+            (Get-PlanProperty (
+                Get-PlanProperty $_ 'context'
+            ) 'session_policy') -eq 'reuse' -or
+            (Get-PlanProperty $_ 'workflow') -in @('loop', 'race')
+        }).Count -gt 0) {
+        Add-PlanError (
+            'team mode cannot carry workflow-only recovery, multiple-writer, ' +
+            'approval-gate, loop, or race requirements.'
+        )
+    }
+}
+if ($mode -eq 'workflow') {
+    $writableAgents = @($agentNodes | Where-Object {
+        (Get-PlanProperty $_ 'read_only') -eq $false
+    })
+    $durableSignal = @($agentNodes | Where-Object {
+        (Get-PlanProperty $_ 'topology') -eq 'background-thread' -or
+        @(Get-PlanProperty $_ 'depends_on').Count -gt 0 -or
+        (Get-PlanProperty (
+            Get-PlanProperty $_ 'context'
+        ) 'handoff_required') -eq $true -or
+        (Get-PlanProperty (
+            Get-PlanProperty $_ 'context'
+        ) 'session_policy') -eq 'reuse' -or
+        (Get-PlanProperty $_ 'workflow') -in @('loop', 'race')
+    }).Count -gt 0 -or $writableAgents.Count -gt 1 -or
+        @($nodes | Where-Object {
+            (Get-PlanProperty $_ 'kind') -eq 'human-gate'
+        }).Count -gt 0
+    if (-not $durableSignal) {
+        Add-PlanError (
+            'workflow mode requires recovery, dependency, multiple writers, ' +
+            'handoff, human gate, loop, or race.'
+        )
     }
 }
 

@@ -1,6 +1,6 @@
 # Adaptive Agent Orchestrator
 
-[English](README.md) · [v0.4.2 更新说明](docs/releases/v0.4.2-beta.1.md) · [安装](#安装) · [工作原理](#工作原理) · [当前限制](#当前限制)
+[English](README.md) · [v0.5.0 更新说明](docs/releases/v0.5.0.md) · [版本历史](docs/releases/README.md) · [安装](#安装) · [工作原理](#工作原理) · [当前限制](#当前限制)
 
 `adaptive-agent-orchestrator` 是一个 Codex Skill：在协调真正独立的工作流
 时，减少重复上下文和重复推理。它提供单 Agent 快速路径、引用优先的 Worker
@@ -27,8 +27,14 @@
   存储角色，也不创建缩小版状态机。
 - **创建过程可见：** 每个 Worker 创建前都说明角色和必要性，创建后报告
   真实身份与状态；选择角色本身不会自动创建 Worker。
-- **最多四个 Worker：** 主 Agent 对直接与持久 Worker 合并计数；确定性
-  脚本在单个持久 run 内强制最多四个。
+- **受保护的活动容量：** 目标最多六个活动 Worker，其中四个可供常驻
+  Worker 使用，另外两个保留给临时 subagent；实际数量服从运行时容量。
+- **自动模型路由：** Luna 处理边界明确的机械任务，Sol 负责判断、写作、
+  实现和审查；Terra 只作为用户明确选择的实验模型。
+- **确定性模式：** `auto` 在轻量快速路径、独立团队和可恢复工作流之间
+  选择，不创建额外调度 Agent。
+- **可复用研究证据：** 只有多条下游工作流需要复用同一来源集时，才按需
+  启用资料整理角色。
 - **行业角色按需加载：** 内置部分行业角色包，只加载被选中的合同；后续
   扩展行业时也不会把全部角色塞入每个 Worker 的上下文。
 - **论文共同撰写：** 方法与行业专家可拥有明确章节，主 Agent 保持论证
@@ -106,7 +112,7 @@ skills/adaptive-agent-orchestrator/
 对 Codex 说：
 
 ```text
-$skill-installer install https://github.com/lovezzh1314-dotcom/adaptive-agent-orchestrator/tree/main/skills/adaptive-agent-orchestrator
+$skill-installer install https://github.com/Gabrielzzh/adaptive-agent-orchestrator/tree/main/skills/adaptive-agent-orchestrator
 ```
 
 安装后重启 Codex。手动安装时，把完整
@@ -182,11 +188,11 @@ $adaptive-agent-orchestrator。共享上下文留在主 Agent，Worker 只拿引
 
 ## 验证情况
 
-v0.4.2-beta.1 候选版本目前通过：
+v0.5.0 正式版本通过：
 
-- 15 个 PowerShell 脚本语法解析；
-- 369 项自测断言；
-- 36 份故意构造的非法负面测试计划均被正确拦截；
+- 18 个 PowerShell 脚本语法解析；
+- 438 项自测断言；
+- 47 份故意构造的非法负面测试计划均被正确拦截；
 - 计划、元数据、日志、handoff、依赖、幂等、所有权、上下文重叠、渐进
   派遣、短任务包和完成门测试；
 - 一个合成的单案例 benchmark 测试。
